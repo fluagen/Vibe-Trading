@@ -202,6 +202,30 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ broker }),
     }),
+
+  // Market Sentiment
+  getSentimentOverview: (params?: { board_type?: string; top_n?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.board_type) q.set("board_type", params.board_type);
+    if (params?.top_n !== undefined) q.set("top_n", String(params.top_n));
+    const qs = q.toString();
+    return request<SentimentOverviewResponse>(`/sentiment/overview${qs ? `?${qs}` : ""}`);
+  },
+  getSectorDetail: (params: { board_code: string; days?: number; board_type?: string }) => {
+    const q = new URLSearchParams({ board_code: params.board_code });
+    if (params.days !== undefined) q.set("days", String(params.days));
+    if (params.board_type) q.set("board_type", params.board_type);
+    return request<SectorDetailResponse>(`/sentiment/sector-detail?${q.toString()}`);
+  },
+  getSentimentHistory: (params: { board_code: string; start_date: string; end_date: string; board_type?: string }) => {
+    const q = new URLSearchParams({
+      board_code: params.board_code,
+      start_date: params.start_date,
+      end_date: params.end_date,
+    });
+    if (params.board_type) q.set("board_type", params.board_type);
+    return request<HistoryResponse>(`/sentiment/history?${q.toString()}`);
+  },
 };
 
 // --- Swarm types ---
@@ -918,4 +942,72 @@ export interface MessageItem {
   created_at: string;
   linked_attempt_id?: string;
   metadata?: Record<string, unknown>;
+}
+
+// --- Market Sentiment types ---
+
+export interface SentimentBoardItem {
+  board_code: string;
+  board_name: string;
+  turnover: number | null;
+  main_net_inflow: number | null;
+  turnover_rate: number | null;
+  change_pct: number | null;
+  crowding_ratio: number | null;
+  crowding_level: "normal" | "elevated" | "high" | "extreme" | null;
+  up_count: number | null;
+  down_count: number | null;
+  leader: string | null;
+  is_favored?: boolean;
+  consecutive_inflow_days?: number;
+  index?: number | null;
+}
+
+export interface SentimentOverviewResponse {
+  ok: boolean;
+  total_market_turnover: number;
+  total_market_turnover_billion: number;
+  sh_turnover: number;
+  sh_turnover_billion: number;
+  sz_turnover: number;
+  sz_turnover_billion: number;
+  board_type: string;
+  data_date: string;
+  top_by_crowding: SentimentBoardItem[];
+  top_by_inflow: SentimentBoardItem[];
+  timestamp: string;
+}
+
+export interface SectorDetailPoint {
+  date: string;
+  crowding_ratio: number | null;
+  main_net_inflow: number | null;
+  main_net_inflow_billion: number | null;
+  turnover: number | null;
+  turnover_billion: number | null;
+  total_market_turnover: number | null;
+  total_market_turnover_billion: number | null;
+  turnover_rate: number | null;
+  change_pct: number | null;
+  close: number | null;
+}
+
+export interface SectorDetailResponse {
+  ok: boolean;
+  board_code: string;
+  board_name: string;
+  total_market_turnover: number;
+  total_market_turnover_billion: number;
+  days_requested: number;
+  data: SectorDetailPoint[];
+}
+
+export interface HistoryResponse {
+  ok: boolean;
+  board_code: string;
+  board_name: string;
+  start_date: string;
+  end_date: string;
+  data: SectorDetailPoint[];
+  timestamp: string;
 }

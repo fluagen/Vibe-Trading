@@ -22,6 +22,9 @@ const Correlation = lazy(() =>
 const AlphaZoo = lazy(() =>
   import("@/pages/AlphaZoo").then((m) => ({ default: m.AlphaZoo })),
 );
+const Sentiment = lazy(() =>
+  import("@/pages/Sentiment").then((m) => ({ default: m.Sentiment })),
+);
 
 function PageLoader() {
   return (
@@ -54,6 +57,7 @@ export const router = createBrowserRouter([
       { path: "/alpha-zoo/bench", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/compare", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/:alphaId", element: wrap(AlphaZoo) },
+      { path: "/sentiment", element: wrap(Sentiment) },
     ],
   },
 ]);

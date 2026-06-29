@@ -386,8 +386,11 @@ def _is_tool_success(result: str) -> bool:
     """Return True if the tool result does not look like an error response."""
     try:
         data = json.loads(result)
-        if isinstance(data, dict) and data.get("status") == "error":
-            return False
+        if isinstance(data, dict):
+            if data.get("status") == "error":
+                return False
+            if data.get("ok") is False:  # explicit False — absence != failure
+                return False
     except (json.JSONDecodeError, TypeError):
         pass
     return True

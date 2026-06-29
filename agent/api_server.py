@@ -3267,6 +3267,13 @@ async def stop_runner_endpoint(payload: LiveRunnerControlRequest):
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
 
+# ============================================================================
+# Market Sentiment routes (Web UI) — defined in src/api/sentiment_routes.py
+# ============================================================================
+
+from src.api.sentiment_routes import register_sentiment_routes  # noqa: E402
+register_sentiment_routes(app)
+
 
 # ============================================================================
 # Main Entry Point

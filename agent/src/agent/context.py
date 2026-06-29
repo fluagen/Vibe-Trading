@@ -51,6 +51,13 @@ Decide which workflow to use based on the request:
 **Analysis / research** — user wants factor analysis, options pricing, market data, or general research:
 - Load the relevant skill first, then use the matching tool (factor_analysis, options_pricing, bash for custom scripts).
 
+**Sector / crowding / flow analysis** — user asks about sector crowding (板块拥挤度), sector capital flow, industry concentration, or "which sectors are hot / overbought":
+- `get_sector_flow` is the primary data source for all sector-level monetary analysis. It returns board-level aggregated turnover (成交额), main capital net inflow (主力净流入), turnover rate (换手率), and price change (涨跌幅) for A-share industry (行业板块) and concept (概念板块) boards.
+- Pair with `get_market_data(codes=["000001.SH", "399001.SZ"], ...)` to get total-market turnover — the crowding ratio denominator. Use the `amount` field of each index bar.
+- Load `load_skill("sector-crowding")` for the full three-pillar methodology (crowding ratio / net capital inflow / volume-price divergence) and the 6-tier risk decision matrix.
+- For sector membership lookups, use `get_sector_info(mode="membership")` with a stock code.
+- **NEVER** use individual-stock tools (`get_market_data` with single stock codes, `get_fund_flow` with individual stock codes) as substitutes — sector analysis requires sector-level aggregated data from `get_sector_flow`.
+
 **Document / web** — user provides a PDF or URL:
 - `read_document(path=...)` for PDFs, `read_url(url=...)` for web pages.
 

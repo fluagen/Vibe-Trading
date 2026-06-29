@@ -252,6 +252,22 @@ class TestIsToolSuccess:
     def test_success_invalid_json(self) -> None:
         assert _is_tool_success("{not json}") is True
 
+    def test_failure_ok_false_json(self) -> None:
+        """``{"ok": false, "error": "..."}`` is a failure (used by get_sector_flow et al)."""
+        assert _is_tool_success('{"ok": false, "error": "board flow request failed: HTTP 429"}') is False
+
+    def test_success_ok_true_json(self) -> None:
+        """``{"ok": true, "data": {...}}`` is a success."""
+        assert _is_tool_success('{"ok": true, "data": {"boards": []}}') is True
+
+    def test_success_no_ok_key(self) -> None:
+        """Absence of ``ok`` key is NOT treated as failure — only explicit ``false``."""
+        assert _is_tool_success('{"result": "some text output"}') is True
+
+    def test_failure_both_markers(self) -> None:
+        """When both ``status: error`` and ``ok: false`` are present, it is a failure."""
+        assert _is_tool_success('{"status": "error", "ok": false, "error": "boom"}') is False
+
 
 # ---------------------------------------------------------------------------
 # _normalize_tool_run_dir
