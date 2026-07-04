@@ -1,0 +1,316 @@
+"""SQLite 存储层 — market_total + market_sector 两张表的 CRUD。
+
+数据仅存原始值，所有衍生指标（拥挤度、资金偏好）由 sentiment_service 动态计算。
+数据库路径默认 agent/data/market_data.db。
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_DEFAULT_DB_PATH = str(Path(__file__).resolve().parent.parent.parent / "data" / "market_data.db")
+
+_VALID_SECTOR_TYPES = ("industry", "concept")
+
+CREATE_MARKET_TOTAL = """
+CREATE TABLE IF NOT EXISTS market_total (
+    trade_date     TEXT PRIMARY KEY,
+    total_amount   REAL NOT NULL,
+    sh_amount      REAL NOT NULL,
+    sz_amount      REAL NOT NULL,
+    collected_at   TEXT NOT NULL
+);
+"""
+
+CREATE_MARKET_SECTOR = """
+CREATE TABLE IF NOT EXISTS market_sector (
+    trade_date     TEXT NOT NULL,
+    sector_type    TEXT NOT NULL,
+    bk_code        TEXT NOT NULL,
+    bk_name        TEXT NOT NULL,
+    index_type     TEXT NOT NULL DEFAULT '',
+    change_pct     REAL,
+    amount         REAL,
+    net_inflow     REAL,
+    collected_at   TEXT NOT NULL,
+    PRIMARY KEY (trade_date, bk_code)
+);
+"""
+
+UPSERT_MARKET_TOTAL = """
+INSERT OR REPLACE INTO market_total
+    (trade_date, total_amount, sh_amount, sz_amount, collected_at)
+VALUES
+    (:trade_date, :total_amount, :sh_amount, :sz_amount, :collected_at);
+"""
+
+UPSERT_MARKET_SECTOR = """
+INSERT OR REPLACE INTO market_sector
+    (trade_date, sector_type, bk_code, bk_name, index_type, change_pct, amount, net_inflow, collected_at)
+VALUES
+    (:trade_date, :sector_type, :bk_code, :bk_name, :index_type, :change_pct, :amount, :net_inflow, :collected_at);
+"""
+
+# ---------------------------------------------------------------------------
+# Store class
+# ---------------------------------------------------------------------------
+
+
+class SentimentStore:
+    """SQLite 持久化存储，管理 market_total 和 market_sector 两张表。"""
+
+    def __init__(self, db_path: str | None = None) -> None:
+        self.db_path = db_path or _DEFAULT_DB_PATH
+        os.makedirs(Path(self.db_path).parent, exist_ok=True)
+        self._conn: sqlite3.Connection | None = None
+
+    # -- connection management -------------------------------------------------
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        if self._conn is None:
+            self._conn = sqlite3.connect(self.db_path)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA foreign_keys=OFF")
+        return self._conn
+
+    def close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    # -- schema ----------------------------------------------------------------
+
+    def ensure_tables(self) -> None:
+        self.conn.execute(CREATE_MARKET_TOTAL)
+        self.conn.execute(CREATE_MARKET_SECTOR)
+        self.conn.commit()
+
+    # -- write ----------------------------------------------------------------
+
+    def upsert_market_total(
+        self,
+        trade_date: str,
+        total: float,
+        sh: float,
+        sz: float,
+        collected_at: str | None = None,
+    ) -> None:
+        collected_at = collected_at or datetime.now().isoformat(timespec="seconds")
+        self.conn.execute(
+            UPSERT_MARKET_TOTAL,
+            {
+                "trade_date": trade_date,
+                "total_amount": total,
+                "sh_amount": sh,
+                "sz_amount": sz,
+                "collected_at": collected_at,
+            },
+        )
+        self.conn.commit()
+
+    def upsert_sectors(
+        self,
+        trade_date: str,
+        sector_type: str,
+        rows: list[dict[str, Any]],
+        collected_at: str | None = None,
+    ) -> None:
+        collected_at = collected_at or datetime.now().isoformat(timespec="seconds")
+        records = [
+            {
+                "trade_date": trade_date,
+                "sector_type": sector_type,
+                "bk_code": r["bk_code"],
+                "bk_name": r["bk_name"],
+                "index_type": r.get("index_type", ""),
+                "change_pct": r.get("change_pct"),
+                "amount": r.get("amount"),
+                "net_inflow": r.get("net_inflow"),
+                "collected_at": collected_at,
+            }
+            for r in rows
+        ]
+        self.conn.executemany(UPSERT_MARKET_SECTOR, records)
+        self.conn.commit()
+
+    # -- read: market_total ----------------------------------------------------
+
+    def get_market_total(self, trade_date: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT trade_date, total_amount, sh_amount, sz_amount, collected_at "
+            "FROM market_total WHERE trade_date = ?",
+            (trade_date,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def get_latest_trading_day(self) -> str | None:
+        row = self.conn.execute(
+            "SELECT MAX(trade_date) FROM market_total"
+        ).fetchone()
+        return row[0] if row else None
+
+    def get_adjacent_trading_days(self, trade_date: str) -> tuple[str | None, str | None]:
+        """返回指定日期前后相邻的交易日。
+
+        Args:
+            trade_date: 当前交易日，YYYY-MM-DD。
+
+        Returns:
+            (prev_trade_date, next_trade_date) — 无前/后数据时对应位置为 None。
+            next_trade_date 若超过今天则返回 None。
+        """
+        from datetime import date
+
+        prev_row = self.conn.execute(
+            "SELECT MAX(trade_date) FROM market_total WHERE trade_date < ?",
+            (trade_date,),
+        ).fetchone()
+        next_row = self.conn.execute(
+            "SELECT MIN(trade_date) FROM market_total WHERE trade_date > ?",
+            (trade_date,),
+        ).fetchone()
+        prev_date: str | None = prev_row[0] if prev_row else None
+        next_date: str | None = next_row[0] if next_row else None
+        # 不返回未来日期
+        today = date.today().isoformat()
+        if next_date and next_date > today:
+            next_date = None
+        return prev_date, next_date
+
+    # -- read: market_sector ---------------------------------------------------
+
+    def get_sectors(
+        self,
+        trade_date: str,
+        sector_type: str | None = None,
+        order_by: str = "amount",
+        order_dir: str = "desc",
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        valid_sort = {"amount", "net_inflow", "change_pct"}
+        sort_col = order_by if order_by in valid_sort else "amount"
+        direction = "DESC" if order_dir == "desc" else "ASC"
+
+        where = "WHERE trade_date = ?"
+        params: list[Any] = [trade_date]
+        if sector_type:
+            where += " AND sector_type = ?"
+            params.append(sector_type)
+
+        sql = (
+            f"SELECT trade_date, sector_type, bk_code, bk_name, "
+            f"index_type, change_pct, amount, net_inflow, collected_at "
+            f"FROM market_sector {where} "
+            f"ORDER BY {sort_col} {direction} "
+            f"LIMIT ?"
+        )
+        params.append(limit)
+        return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
+
+    def get_sector_history(
+        self,
+        bk_code: str,
+        sector_type: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int = 60,
+    ) -> list[dict[str, Any]]:
+        where = "WHERE bk_code = ? AND sector_type = ?"
+        params: list[Any] = [bk_code, sector_type]
+        if start_date:
+            where += " AND trade_date >= ?"
+            params.append(start_date)
+        if end_date:
+            where += " AND trade_date <= ?"
+            params.append(end_date)
+
+        sql = (
+            f"SELECT trade_date, sector_type, bk_code, bk_name, "
+            f"index_type, change_pct, amount, net_inflow, collected_at "
+            f"FROM market_sector {where} "
+            f"ORDER BY trade_date ASC "
+            f"LIMIT ?"
+        )
+        params.append(limit)
+        return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
+
+    def get_board_list(self, sector_type: str) -> list[dict[str, str]]:
+        """取最新交易日的板块名称+代码去重列表，供前端 autocomplete。"""
+        latest = self.get_latest_trading_day()
+        if not latest:
+            return []
+        rows = self.conn.execute(
+            "SELECT DISTINCT bk_code, bk_name FROM market_sector "
+            "WHERE sector_type = ? AND trade_date = ? "
+            "ORDER BY bk_code",
+            (sector_type, latest),
+        ).fetchall()
+        return [{"bk_code": r["bk_code"], "bk_name": r["bk_name"]} for r in rows]
+
+    def get_available_dates(self, limit: int = 30) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT DISTINCT trade_date FROM market_total "
+            "ORDER BY trade_date DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    # -- delete ----------------------------------------------------------------
+
+    def delete_by_date(self, trade_date: str) -> dict[str, int]:
+        """删除指定日期的全市场 + 板块数据，返回删除行数。"""
+        cursor = self.conn.execute(
+            "DELETE FROM market_total WHERE trade_date = ?", (trade_date,)
+        )
+        total_deleted = cursor.rowcount
+        cursor = self.conn.execute(
+            "DELETE FROM market_sector WHERE trade_date = ?", (trade_date,)
+        )
+        sector_deleted = cursor.rowcount
+        self.conn.commit()
+        return {"market_total_deleted": total_deleted, "market_sector_deleted": sector_deleted}
+
+    # -- collect status -------------------------------------------------------
+
+    def get_collect_status(self) -> dict[str, Any]:
+        """返回最近采集状态。"""
+        latest = self.get_latest_trading_day()
+        if not latest:
+            return {"has_data": False, "latest_date": None, "latest_collected_at": None}
+
+        total_row = self.conn.execute(
+            "SELECT collected_at FROM market_total WHERE trade_date = ?",
+            (latest,),
+        ).fetchone()
+
+        industry_count = self.conn.execute(
+            "SELECT COUNT(*) FROM market_sector WHERE trade_date = ? AND sector_type = 'industry'",
+            (latest,),
+        ).fetchone()[0]
+
+        concept_count = self.conn.execute(
+            "SELECT COUNT(*) FROM market_sector WHERE trade_date = ? AND sector_type = 'concept'",
+            (latest,),
+        ).fetchone()[0]
+
+        return {
+            "has_data": True,
+            "latest_date": latest,
+            "latest_collected_at": total_row["collected_at"] if total_row else None,
+            "sector_counts": {"industry": industry_count, "concept": concept_count},
+        }

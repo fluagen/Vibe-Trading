@@ -179,3 +179,17 @@ External MCP servers for the agent to call are configured in `~/.vibe-trading/ag
 - **Factor zoo contributions**: must pass purity gate, lookahead gate, and include `__alpha_meta__`. See `CONTRIBUTING.md` for the full reviewer checklist.
 - **No AI-attribution trailers**: do not add `Co-Authored-By:` or similar to commits.
 - **Live trading** is experimental/opt-in only — never test broker-write flows during routine PR validation.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as local markdown files in `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — one `CONTEXT.md` at repo root + `docs/adr/` for architecture decisions. See `docs/agents/domain.md`.

@@ -12,6 +12,7 @@ const PROXY_PATHS = [
   "/live",
   "/upload",
   "/shadow-reports",
+  "/sentiment",
 ];
 
 export default defineConfig(({ mode }) => {

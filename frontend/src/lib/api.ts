@@ -204,12 +204,19 @@ export const api = {
     }),
 
   // Market Sentiment
-  getSentimentOverview: (params?: { board_type?: string; top_n?: number }) => {
+  getSentimentOverview: (params?: { board_type?: string; top_n?: number; date?: string }) => {
     const q = new URLSearchParams();
     if (params?.board_type) q.set("board_type", params.board_type);
     if (params?.top_n !== undefined) q.set("top_n", String(params.top_n));
+    if (params?.date) q.set("date", params.date);
     const qs = q.toString();
     return request<SentimentOverviewResponse>(`/sentiment/overview${qs ? `?${qs}` : ""}`);
+  },
+  getSentimentBoards: (params?: { board_type?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.board_type) q.set("board_type", params.board_type);
+    const qs = q.toString();
+    return request<SentimentBoardsResponse>(`/sentiment/boards${qs ? `?${qs}` : ""}`);
   },
   getSectorDetail: (params: { board_code: string; days?: number; board_type?: string }) => {
     const q = new URLSearchParams({ board_code: params.board_code });
@@ -226,6 +233,13 @@ export const api = {
     if (params.board_type) q.set("board_type", params.board_type);
     return request<HistoryResponse>(`/sentiment/history?${q.toString()}`);
   },
+  collectSentiment: (params?: { date?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.date) q.set("date", params.date);
+    const qs = q.toString();
+    return request<CollectResponse>(`/sentiment/collect${qs ? `?${qs}` : ""}`, { method: "POST" });
+  },
+  getCollectStatus: () => request<CollectStatusResponse>("/sentiment/collect/status"),
 };
 
 // --- Swarm types ---
@@ -973,6 +987,10 @@ export interface SentimentOverviewResponse {
   sz_turnover_billion: number;
   board_type: string;
   data_date: string;
+  prev_trade_date: string | null;
+  next_trade_date: string | null;
+  all_sectors: SentimentBoardItem[];
+  total_count: number;
   top_by_crowding: SentimentBoardItem[];
   top_by_inflow: SentimentBoardItem[];
   timestamp: string;
@@ -1010,4 +1028,32 @@ export interface HistoryResponse {
   end_date: string;
   data: SectorDetailPoint[];
   timestamp: string;
+}
+
+export interface SentimentBoardItemSimple {
+  bk_code: string;
+  bk_name: string;
+}
+
+export interface SentimentBoardsResponse {
+  ok: boolean;
+  board_type: string;
+  boards: SentimentBoardItemSimple[];
+}
+
+export interface CollectResponse {
+  ok: boolean;
+  date?: string;
+  total_market?: { trade_date: string; sh_amount: number; sz_amount: number; total: number };
+  sectors_collected?: Record<string, number>;
+  sectors_failed?: string[];
+  elapsed_seconds: number;
+  error?: string;
+}
+
+export interface CollectStatusResponse {
+  has_data: boolean;
+  latest_date: string | null;
+  latest_collected_at: string | null;
+  sector_counts?: { industry: number; concept: number };
 }

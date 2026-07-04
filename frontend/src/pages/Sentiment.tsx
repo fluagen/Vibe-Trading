@@ -1,13 +1,14 @@
-import { useState, useEffect, useCallback } from "react";
-import { TrendingUp, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
-import { api, type SentimentOverviewResponse, type SentimentBoardItem, type SectorDetailPoint } from "@/lib/api";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { TrendingUp, RefreshCw, ChevronDown, ChevronUp, Hourglass, 
+Download, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { api, type SentimentOverviewResponse, type SentimentBoardItem, type SectorDetailPoint, type SentimentBoardItemSimple } from "@/lib/api";
 import { CrowdingChart } from "@/components/charts/CrowdingChart";
 
 // ---- helpers ----
 
 function fmtYi(value: number | null | undefined): string {
   if (value == null || value === 0) return "-";
-  const yi = value / 1e8;
+  const yi = value;
   if (Math.abs(yi) >= 10000) return (yi / 10000).toFixed(2) + "万亿";
   return yi.toFixed(0) + "亿";
 }
@@ -41,11 +42,24 @@ function crowdingBadge(level: string | null | undefined) {
 // ---- component ----
 
 export function Sentiment() {
+  const today = new Date().toISOString().slice(0, 10);
+  const past = new Date(Date.now() - 10 * 864e5).toISOString().slice(0, 10);
+
   // overview
   const [overview, setOverview] = useState<SentimentOverviewResponse | null>(null);
   const [boardType, setBoardType] = useState<"industry" | "concept">("industry");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [overviewDate, setOverviewDate] = useState(today);
+  const [collecting, setCollecting] = useState(false);
+  const initialLoad = useRef(true);
+
+  // table sort & pagination
+  type SortField = "turnover" | "crowding_ratio" | "main_net_inflow" | "change_pct" | "is_favored";
+  const [sortField, setSortField] = useState<SortField>("crowding_ratio");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   // detail
   const [selectedBoard, setSelectedBoard] = useState<SentimentBoardItem | null>(null);
@@ -53,8 +67,6 @@ export function Sentiment() {
   const [detailLoading, setDetailLoading] = useState(false);
 
   // history
-  const today = new Date().toISOString().slice(0, 10);
-  const past = new Date(Date.now() - 10 * 864e5).toISOString().slice(0, 10);
   const [histStart, setHistStart] = useState(past);
   const [histEnd, setHistEnd] = useState(today);
   const [histCode, setHistCode] = useState("");
@@ -62,36 +74,39 @@ export function Sentiment() {
   const [histName, setHistName] = useState("");
   const [histLoading, setHistLoading] = useState(false);
 
-  // board autocomplete
-  const [allBoards, setAllBoards] = useState<SentimentBoardItem[]>([]);
+  // board autocomplete (from /sentiment/boards)
+  const [allBoards, setAllBoards] = useState<SentimentBoardItemSimple[]>([]);
   const [boardSearch, setBoardSearch] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
 
-  // sync boards to local (from overview data — covers 60+ unique boards)
+  // load board list for autocomplete (on mount + boardType change)
   useEffect(() => {
-    if (!overview) return;
-    const seen = new Set<string>();
-    const merged: SentimentBoardItem[] = [];
-    for (const b of [...(overview.top_by_crowding || []), ...(overview.top_by_inflow || [])]) {
-      if (!seen.has(b.board_code)) {
-        seen.add(b.board_code);
-        merged.push(b);
-      }
-    }
-    setAllBoards(merged);
-  }, [overview]);
+    api.getSentimentBoards({ board_type: boardType }).then((data) => {
+      if (data.ok) setAllBoards(data.boards);
+    }).catch(() => {});
+  }, [boardType]);
 
   const filteredBoards = boardSearch
-    ? allBoards.filter((b) => b.board_name.toLowerCase().includes(boardSearch.toLowerCase())).slice(0, 10)
+    ? allBoards.filter((b) => b.bk_name.toLowerCase().includes(boardSearch.toLowerCase())).slice(0, 10)
     : allBoards.slice(0, 10);
+
+  // ---- actions ----
 
   const loadOverview = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.getSentimentOverview({ board_type: boardType, top_n: 20 });
+      const params: { board_type: string; top_n: number; date?: string } = { board_type: boardType, top_n: 20 };
+      if (!initialLoad.current) {
+        params.date = overviewDate;
+      }
+      const data = await api.getSentimentOverview(params);
       if (data.ok) {
         setOverview(data);
+        if (initialLoad.current) {
+          setOverviewDate(data.data_date);
+          initialLoad.current = false;
+        }
       } else {
         setError((data as unknown as { error?: string }).error || "加载失败");
       }
@@ -100,9 +115,27 @@ export function Sentiment() {
     } finally {
       setLoading(false);
     }
-  }, [boardType]);
+  }, [boardType, overviewDate]);
 
+  // load overview when date or boardType changes
   useEffect(() => { loadOverview(); }, [loadOverview]);
+
+  const doCollect = useCallback(async () => {
+    setCollecting(true);
+    setError(null);
+    try {
+      const result = await api.collectSentiment({ date: overviewDate });
+      if (result.ok) {
+        await loadOverview();
+      } else {
+        setError(result.error || "采集失败");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "采集失败");
+    } finally {
+      setCollecting(false);
+    }
+  }, [overviewDate, loadOverview]);
 
   const loadDetail = useCallback(async (board: SentimentBoardItem) => {
     setSelectedBoard(board);
@@ -124,7 +157,53 @@ export function Sentiment() {
     finally { setHistLoading(false); }
   }, [histCode, histStart, histEnd, boardType]);
 
-  const favoredCount = overview?.top_by_crowding?.filter((b) => b.is_favored).length ?? 0;
+  const favoredCount = overview?.all_sectors?.filter((b) => b.is_favored).length ?? 0;
+  const hasData = overview !== null && overview.all_sectors && overview.all_sectors.length > 0;
+
+  // sort + paginate
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder((prev: "asc" | "desc") => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setSortField(field);
+      setSortOrder(field === "is_favored" ? "desc" : "desc");
+    }
+    setPage(1);
+  };
+
+  const sortIcon = (field: SortField) => {
+    if (sortField !== field) return <ArrowUpDown className="h-3 w-3 text-muted-foreground/50" />;
+    return sortOrder === "desc"
+      ? <ArrowDown className="h-3 w-3 text-primary" />
+      : <ArrowUp className="h-3 w-3 text-primary" />;
+  };
+
+  const sortedSectors = (() => {
+    if (!overview?.all_sectors) return [];
+    const list = [...overview.all_sectors];
+    const dir = sortOrder === "desc" ? -1 : 1;
+    list.sort((a, b) => {
+      if (sortField === "is_favored") {
+        const va = a.is_favored === true ? 1 : a.is_favored === false ? 0 : -1;
+        const vb = b.is_favored === true ? 1 : b.is_favored === false ? 0 : -1;
+        return (va - vb) * dir;
+      }
+      const va = a[sortField];
+      const vb = b[sortField];
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      return (va - vb) * dir;
+    });
+    return list;
+  })();
+
+  const totalPages = Math.max(1, Math.ceil((overview?.total_count || 0) / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pagedSectors = sortedSectors.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  // reset page when date or boardType changes
+  useEffect(() => { setPage(1); }, [overviewDate, boardType]);
 
   // ---- render ----
 
@@ -147,10 +226,39 @@ export function Sentiment() {
             ))}
           </div>
         </div>
-        <button onClick={loadOverview} disabled={loading}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm hover:bg-muted transition">
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />刷新
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => overview?.prev_trade_date && setOverviewDate(overview.prev_trade_date)}
+            disabled={!overview?.prev_trade_date}
+            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-sm hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed"
+            title="上个交易日"
+          >
+            <ChevronLeft className="h-4 w-4" />上个交易日
+          </button>
+          <input
+            type="date"
+            value={overviewDate}
+            onChange={(e) => setOverviewDate(e.target.value)}
+            className="border rounded px-2 py-1.5 text-sm bg-background"
+          />
+          <button
+            onClick={() => overview?.next_trade_date && setOverviewDate(overview.next_trade_date)}
+            disabled={!overview?.next_trade_date}
+            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-sm hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed"
+            title="下个交易日"
+          >
+            下个交易日<ChevronRight className="h-4 w-4" />
+          </button>
+          <button onClick={doCollect} disabled={collecting}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm bg-primary text-primary-foreground hover:opacity-90 transition disabled:opacity-50">
+            <Hourglass className={`h-4 w-4 ${collecting ? "animate-spin" : ""}`} />
+            {collecting ? "采集中..." : "采集数据"}
+          </button>
+          <button onClick={loadOverview} disabled={loading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm hover:bg-muted transition">
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />刷新
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -159,20 +267,28 @@ export function Sentiment() {
         </div>
       )}
 
+      {/* Empty state */}
+      {!hasData && !loading && !error && (
+        <div className="border rounded-lg p-12 text-center text-muted-foreground space-y-2">
+          <p className="text-lg font-medium">暂无缓存数据</p>
+          <p className="text-sm">请选择日期后点击"采集数据"按钮，从同花顺 iwencai 拉取市场数据</p>
+        </div>
+      )}
+
       {/* Overview cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="border rounded-lg p-4 space-y-1">
           <div className="text-xs text-muted-foreground">全市场成交额</div>
-          <div className="text-2xl font-bold">{overview ? fmtYi(overview.total_market_turnover) : "-"}</div>
+          <div className="text-2xl font-bold">{overview ? fmtYi(overview.total_market_turnover_billion) : "-"}</div>
           <div className="text-xs text-muted-foreground">
-            {overview ? `沪 ${fmtYi(overview.sh_turnover)}  深 ${fmtYi(overview.sz_turnover)}` : "加载中..."}
+            {overview ? `沪 ${fmtYi(overview.sh_turnover_billion)}  深 ${fmtYi(overview.sz_turnover_billion)}` : "-"}
           </div>
-          <div className="text-xs text-muted-foreground">数据日期: {overview?.data_date || "-"}</div>
+          <div className="text-xs text-muted-foreground">数据日期: {overview?.data_date || overviewDate}</div>
         </div>
         <div className="border rounded-lg p-4 space-y-1">
           <div className="text-xs text-muted-foreground">最高拥挤板块</div>
           {overview?.top_by_crowding?.[0] ? (
-            <><div className="text-2xl font-bold">{overview.top_by_crowding[0].board_name}</div>
+            <><div className="text-2xl font-bold truncate">{overview.top_by_crowding[0].board_name}</div>
               <div className="flex items-center gap-2">
                 <span className="text-lg font-semibold">{overview.top_by_crowding[0].crowding_ratio?.toFixed(1)}%</span>
                 {crowdingBadge(overview.top_by_crowding[0].crowding_level)}
@@ -182,7 +298,7 @@ export function Sentiment() {
         <div className="border rounded-lg p-4 space-y-1">
           <div className="text-xs text-muted-foreground">主力资金方向</div>
           {overview?.top_by_inflow?.[0] ? (
-            <><div className="text-2xl font-bold">{overview.top_by_inflow[0].board_name}</div>
+            <><div className="text-2xl font-bold truncate">{overview.top_by_inflow[0].board_name}</div>
               <div className={`text-lg font-semibold flex items-center gap-1 ${(overview.top_by_inflow[0].main_net_inflow ?? 0) >= 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}>
                 {(overview.top_by_inflow[0].main_net_inflow ?? 0) >= 0 ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                 {fmtYi(overview.top_by_inflow[0].main_net_inflow)}
@@ -198,7 +314,7 @@ export function Sentiment() {
 
       {/* Crowding table */}
       <div className="border rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b bg-muted/50">
+        <div className="px-4 py-3 border-b bg-muted/50 flex items-center justify-between">
           <h2 className="font-semibold text-sm">板块拥挤度明细</h2>
         </div>
         <div className="overflow-x-auto">
@@ -206,15 +322,23 @@ export function Sentiment() {
             <thead className="bg-muted/30">
               <tr>
                 <th className="px-4 py-2 text-left font-medium">板块名称</th>
-                <th className="px-4 py-2 text-right font-medium">成交额</th>
-                <th className="px-4 py-2 text-right font-medium">拥挤度比率</th>
-                <th className="px-4 py-2 text-right font-medium">主力净流入</th>
-                <th className="px-4 py-2 text-right font-medium">涨跌幅</th>
-                <th className="px-4 py-2 text-center font-medium">资金偏好</th>
+                {([
+                  ["turnover", "成交额"],
+                  ["crowding_ratio", "拥挤度比率"],
+                  ["main_net_inflow", "主力净流入"],
+                  ["change_pct", "涨跌幅"],
+                ] as [SortField, string][]).map(([field, label]) => (
+                  <th key={field} className="px-4 py-2 text-right font-medium cursor-pointer select-none hover:bg-muted/50 transition" onClick={() => toggleSort(field)}>
+                    <span className="inline-flex items-center justify-end gap-1">{label}{sortIcon(field)}</span>
+                  </th>
+                ))}
+                <th className="px-4 py-2 text-center font-medium cursor-pointer select-none hover:bg-muted/50 transition" onClick={() => toggleSort("is_favored")}>
+                  <span className="inline-flex items-center justify-center gap-1">资金偏好{sortIcon("is_favored")}</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {overview?.top_by_crowding?.map((b) => {
+              {pagedSectors.map((b) => {
                 const cr = b.crowding_ratio ?? 0;
                 const barColor = cr >= 16 ? "#ef4444" : cr >= 14 ? "#f97316" : cr >= 10 ? "#eab308" : "#22c55e";
                 return (
@@ -245,7 +369,7 @@ export function Sentiment() {
                   </tr>
                 );
               })}
-              {(!overview || overview.top_by_crowding?.length === 0) && !loading && (
+              {pagedSectors.length === 0 && !loading && (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">暂无数据</td></tr>
               )}
               {loading && (
@@ -254,6 +378,39 @@ export function Sentiment() {
             </tbody>
           </table>
         </div>
+        {/* Pagination */}
+        {hasData && totalPages > 0 && (
+          <div className="px-4 py-2.5 border-t flex items-center justify-between text-sm text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span>每页</span>
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number((e.target as HTMLSelectElement).value)); setPage(1); }}
+                className="border rounded px-1.5 py-0.5 text-sm bg-background"
+              >
+                {[20, 50, 100].map((n) => (<option key={n} value={n}>{n}</option>))}
+              </select>
+              <span>条</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span>第 {safePage}/{totalPages} 页，共 {overview?.total_count ?? 0} 条</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setPage(1)} disabled={safePage <= 1}
+                className="px-2 py-0.5 rounded border text-sm hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">首页</button>
+              <button onClick={() => setPage((p: number) => Math.max(1, p - 1))} disabled={safePage <= 1}
+                className="px-2 py-0.5 rounded border text-sm hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">
+                <ChevronLeft className="h-3 w-3" />
+              </button>
+              <button onClick={() => setPage((p: number) => Math.min(totalPages, p + 1))} disabled={safePage >= totalPages}
+                className="px-2 py-0.5 rounded border text-sm hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">
+                <ChevronRight className="h-3 w-3" />
+              </button>
+              <button onClick={() => setPage(totalPages)} disabled={safePage >= totalPages}
+                className="px-2 py-0.5 rounded border text-sm hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">末页</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Detail panel */}
@@ -268,8 +425,8 @@ export function Sentiment() {
                 {[
                   ["当前拥挤度", detailData[detailData.length - 1]?.crowding_ratio?.toFixed(1) + "%"],
                   ["5日均拥挤度", (detailData.slice(-5).reduce((s, d) => s + (d.crowding_ratio ?? 0), 0) / 5).toFixed(1) + "%"],
-                  ["今日净流入", fmtYi(detailData[detailData.length - 1]?.main_net_inflow)],
-                  ["全市场成交额", fmtYi(detailData[detailData.length - 1]?.total_market_turnover)],
+                  ["今日净流入", fmtYi(detailData[detailData.length - 1]?.main_net_inflow_billion)],
+                  ["全市场成交额", fmtYi(detailData[detailData.length - 1]?.total_market_turnover_billion)],
                   ["连续流入", (() => { let c = 0; for (let i = detailData.length - 1; i >= 0 && (detailData[i]?.main_net_inflow ?? 0) > 0; i--) c++; return c ? c + "日" : "-"; })()],
                 ].map(([label, value]) => (
                   <div key={label} className="border rounded p-2 text-center">
@@ -307,18 +464,18 @@ export function Sentiment() {
               <div className="absolute z-10 mt-0.5 w-64 max-h-48 overflow-y-auto border rounded bg-popover shadow-lg">
                 {filteredBoards.map((b) => (
                   <button
-                    key={b.board_code}
+                    key={b.bk_code}
                     type="button"
                     className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted transition flex justify-between items-center"
                     onMouseDown={() => {
-                      setHistCode(b.board_code);
-                      setBoardSearch(b.board_name);
-                      setHistName(b.board_name);
+                      setHistCode(b.bk_code);
+                      setBoardSearch(b.bk_name);
+                      setHistName(b.bk_name);
                       setShowDropdown(false);
                     }}
                   >
-                    <span>{b.board_name}</span>
-                    <span className="text-xs text-muted-foreground font-mono">{b.board_code}</span>
+                    <span>{b.bk_name}</span>
+                    <span className="text-xs text-muted-foreground font-mono">{b.bk_code}</span>
                   </button>
                 ))}
               </div>
@@ -350,7 +507,7 @@ export function Sentiment() {
 
       {/* Disclaimer */}
       <div className="text-xs text-muted-foreground text-center py-4 border-t">
-        本分析仅基于公开交易数据的拥挤度指标，不构成投资建议。市场有风险，投资需谨慎。拥挤度指标是辅助参考工具，必须结合基本面、政策面、市场情绪等多维度信息综合判断。
+        本分析仅基于公开交易数据的拥挤度指标，不构成投资建议。市场有风险，投资需谨慎。
       </div>
     </div>
   );
