@@ -13,6 +13,7 @@ const PROXY_PATHS = [
   "/upload",
   "/shadow-reports",
   "/sentiment",
+  "/opportunity-pool",
 ];
 
 export default defineConfig(({ mode }) => {

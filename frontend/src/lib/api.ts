@@ -240,6 +240,61 @@ export const api = {
     return request<CollectResponse>(`/sentiment/collect${qs ? `?${qs}` : ""}`, { method: "POST" });
   },
   getCollectStatus: () => request<CollectStatusResponse>("/sentiment/collect/status"),
+
+  // Opportunity Pool
+  listCandidates: () => request<CandidateItem[]>("/opportunity-pool/candidates"),
+  addCandidates: (codes: string[], names: string[], markets: string[]) =>
+    request<{ added: number }>("/opportunity-pool/candidates", {
+      method: "POST",
+      body: JSON.stringify({ codes, names, markets }),
+    }),
+  removeCandidate: (code: string) =>
+    request<{ removed: boolean }>(`/opportunity-pool/candidates/${encodeURIComponent(code)}`, {
+      method: "DELETE",
+    }),
+  batchRemoveCandidates: (codes: string[]) =>
+    request<{ removed: number }>("/opportunity-pool/candidates/batch-delete", {
+      method: "POST",
+      body: JSON.stringify({ codes }),
+    }),
+  loadDefaultPool: () =>
+    request<{ added: number; errors: string[] }>("/opportunity-pool/candidates/default"),
+  importCandidates: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetch("/opportunity-pool/candidates/import", {
+      method: "POST",
+      body: form,
+    }).then(r => r.json()) as Promise<{ added: number; invalid: number; skipped_duplicates: number }>;
+  },
+  getStrategies: () => request<string[]>("/opportunity-pool/strategies"),
+  resolveCode: (code: string) =>
+    request<{ code: string; name: string; market: string } | { error: string }>(`/opportunity-pool/resolve?code=${encodeURIComponent(code)}`),
+  startScan: (strategy: string) =>
+    request<{ job_id: string | null; error?: string }>("/opportunity-pool/scan", {
+      method: "POST",
+      body: JSON.stringify({ strategy }),
+    }),
+  scanStreamUrl: (jobId: string) =>
+    `${window.location.origin}/opportunity-pool/scan/${jobId}/stream`,
+  scanStatus: (jobId: string) =>
+    request<ScanJobStatus>(`/opportunity-pool/scan/${jobId}`),
+  getWatchlist: () => request<WatchlistItem[]>("/opportunity-pool/watchlist"),
+  addToWatchlist: (item: { code: string; name: string; state_at_add: string; position_at_add: number; scan_job_id?: string }) =>
+    request<{ added: boolean }>("/opportunity-pool/watchlist", {
+      method: "POST",
+      body: JSON.stringify(item),
+    }),
+  removeFromWatchlist: (code: string) =>
+    request<{ removed: boolean }>(`/opportunity-pool/watchlist/${encodeURIComponent(code)}`, {
+      method: "DELETE",
+    }),
+  refreshAllSignals: () =>
+    request<{ job_id: string | null; error?: string }>("/opportunity-pool/watchlist/refresh-all", {
+      method: "POST",
+    }),
+  refreshStreamUrl: (jobId: string) =>
+    `${window.location.origin}/opportunity-pool/scan/${jobId}/stream`,
 };
 
 // --- Swarm types ---
@@ -1056,4 +1111,46 @@ export interface CollectStatusResponse {
   latest_date: string | null;
   latest_collected_at: string | null;
   sector_counts?: { industry: number; concept: number };
+}
+
+// --- Opportunity Pool types ---
+
+export interface CandidateItem {
+  code: string;
+  name: string;
+  market: string;
+  source: string;
+  added_at: string;
+}
+
+export interface ScanJobStatus {
+  job_id: string;
+  status: string;
+  strategy: string;
+  total_codes: number;
+  done_codes: number;
+  current_code?: string;
+}
+
+export interface ScanResultItem {
+  code: string;
+  name: string;
+  state: string;
+  position_signal: number;
+  date: string;
+}
+
+export interface WatchlistItem {
+  code: string;
+  name: string;
+  strategy_name: string;
+  state_at_add: string;
+  position_at_add: number;
+  score_at_add?: number;
+  added_at: string;
+  scan_job_id?: string;
+  current_state?: string;
+  current_position?: number;
+  current_updated?: string;
+  notes?: string;
 }
