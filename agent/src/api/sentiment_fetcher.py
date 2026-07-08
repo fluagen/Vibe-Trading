@@ -55,7 +55,8 @@ def get_market_total(trade_date: str | None = None) -> dict | None:
     if not rows or len(rows) < 2:
         return None
 
-    keys = list(rows[0].keys())
+    # 收集所有行的 key（API 返回稀疏列，如 主力净买入额 仅在部分行出现）
+    keys = list(set().union(*(r.keys() for r in rows)))
     amt_key = _find_key(keys, "成交额[")
     trade_date = _extract_date(keys, "成交额[")
 
@@ -84,7 +85,8 @@ def _parse_sector_rows(rows: list[dict]) -> tuple[str, list[dict]]:
     if not rows:
         return datetime.now().strftime("%Y-%m-%d"), []
 
-    keys = list(rows[0].keys())
+    # 收集所有行的 key（API 返回稀疏列，如 主力净买入额 仅在部分行出现）
+    keys = list(set().union(*(r.keys() for r in rows)))
     chg_key = _find_key(keys, "涨跌幅[")
     amt_key = _find_key(keys, "成交额[")
     inf_key = _find_key(keys, "主力净买入额[")

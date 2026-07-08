@@ -87,6 +87,14 @@ const ZOO_CARDS: ZooCard[] = [
     approxCount: 6,
     accent: "from-violet-500/20 to-violet-500/5",
   },
+  {
+    id: "factor_miner",
+    title: "Factor Miner",
+    description:
+      "K-line pattern signals extracted from strategies — 止跌K, 证伪K, 量价背离, and structure states for China A-shares.",
+    approxCount: 4,
+    accent: "from-rose-500/20 to-rose-500/5",
+  },
 ];
 
 const UNIVERSE_OPTIONS = [
