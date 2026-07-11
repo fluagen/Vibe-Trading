@@ -3277,6 +3277,9 @@ register_sentiment_routes(app)
 from src.api.watch_pool_routes import register_watch_pool_routes  # noqa: E402
 register_watch_pool_routes(app)
 
+from src.api.strategy_research_routes import register_strategy_research_routes  # noqa: E402
+register_strategy_research_routes(app)
+
 
 # ============================================================================
 # Main Entry Point

@@ -13,6 +13,7 @@ const PROXY_PATHS = [
   "/upload",
   "/shadow-reports",
   "/sentiment",
+  "/strategy-research",
   "/opportunity-pool",
 ];
 

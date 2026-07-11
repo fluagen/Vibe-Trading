@@ -233,6 +233,88 @@ def iwencai_query(query: str, page: int = 1, limit: int = 200) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def query_sector_members(bk_code_or_name: str) -> list[dict[str, object]]:
+    """Query sector constituent stocks via THS iwencai — rich fields.
+
+    Returns:
+        List of ``{"code": "600519", "name": "贵州茅台", "price": 33.0,
+        "change_pct": 2.01, "concepts": ["黄金概念",...],
+        "industries": ["有色金属","贵金属",...]}``.
+        ``code`` is normalized to bare 6-digit.
+
+    Raises:
+        RuntimeError: If no members are found for the given code/name.
+    """
+    name = bk_code_or_name
+    if "." in bk_code_or_name:
+        rows = iwencai_paginate(bk_code_or_name, max_pages=1, label="板块查找")
+        if rows:
+            name = rows[0].get("指数简称", bk_code_or_name)
+
+    query = f"{name} 成分股 股票代码 股票简称 最新价 最新涨跌幅 所属概念 所属同花顺行业"
+    rows = iwencai_paginate(query, max_pages=5, label="成份股")
+
+    # Resolve dynamic field keys (iwencai may suffix with date like "最新价[20260710]")
+    _keys: list[str] = []
+    if rows:
+        _keys = list(set().union(*(r.keys() for r in rows)))
+
+    def _f(prefix: str) -> str | None:
+        for k in _keys:
+            if k.startswith(prefix):
+                return k
+        return None
+
+    price_key = _f("最新价") or "最新价"
+    chg_key = _f("最新涨跌幅") or "最新涨跌幅"
+    concepts_key = _f("所属概念") or "所属概念"
+    industry_key = _f("所属同花顺行业") or "所属同花顺行业"
+
+    members: list[dict[str, object]] = []
+    for r in rows:
+        stock_code = r.get("股票代码", "") or r.get("代码", "")
+        stock_name = r.get("股票简称", "") or r.get("名称", "")
+        if not stock_code:
+            continue
+        # Normalize to bare 6-digit code.
+        code = str(stock_code).strip()
+        if "." in code:
+            code = code.split(".")[0]
+        code = code.zfill(6)
+
+        try:
+            price = float(r.get(price_key, 0) or 0)
+        except (ValueError, TypeError):
+            price = 0.0
+        try:
+            change_pct = float(r.get(chg_key, 0) or 0)
+        except (ValueError, TypeError):
+            change_pct = 0.0
+
+        concepts = r.get(concepts_key, []) or []
+        if isinstance(concepts, str):
+            concepts = [c.strip() for c in concepts.split(",") if c.strip()]
+        industries = r.get(industry_key, []) or []
+        if isinstance(industries, str):
+            industries = [c.strip() for c in industries.split(",") if c.strip()]
+
+        members.append({
+            "code": code,
+            "name": str(stock_name),
+            "price": round(price, 2),
+            "change_pct": round(change_pct, 4),
+            "concepts": [str(c) for c in concepts],
+            "industries": [str(c) for c in industries],
+        })
+
+    if not members:
+        raise RuntimeError(
+            f"未找到板块 {bk_code_or_name!r} 的成份股，请确认板块名称/代码是否正确"
+        )
+
+    return members
+
+
 def iwencai_paginate(query: str, max_pages: int = 20, label: str = "") -> list[dict]:
     """分页获取全部结果。
 

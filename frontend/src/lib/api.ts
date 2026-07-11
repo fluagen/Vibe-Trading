@@ -295,6 +295,53 @@ export const api = {
     }),
   refreshStreamUrl: (jobId: string) =>
     `${window.location.origin}/opportunity-pool/scan/${jobId}/stream`,
+
+  // --- Strategy Research ---
+
+  getTradingDays: (limit: number = 30) =>
+    request<TradingDaysResponse>(`/strategy-research/trading-days?limit=${limit}`),
+
+  getStrategyResearchSectors: (type: "industry" | "concept") =>
+    request<SectorListResponse>(`/strategy-research/sectors?type=${type}`),
+
+  getSectorMembers: (bkCode: string, sectorType: string) =>
+    request<SectorMembersResponse>(
+      `/strategy-research/sector-members/${encodeURIComponent(bkCode)}?sector_type=${sectorType}`
+    ),
+
+  startBacktest: (body: BacktestRequest) =>
+    request<{ job_id: string | null; error?: string }>("/strategy-research/backtest", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  backtestStreamUrl: (jobId: string) =>
+    `${window.location.origin}/strategy-research/backtest/${jobId}/stream`,
+
+  backtestStatus: (jobId: string) =>
+    request<{
+      job_id: string;
+      status: string;
+      total_codes: number;
+      done_codes: number;
+      current_code?: string;
+    }>(`/strategy-research/backtest/${jobId}`),
+
+  getStrategyResearchStrategies: () => request<string[]>("/strategy-research/strategies"),
+
+  getStrategyConfig: (strategy: string) =>
+    request<StrategyConfigResponse>(`/strategy-research/configs?strategy=${encodeURIComponent(strategy)}`),
+
+  saveStrategyConfig: (strategy: string, params: StrategyConfigParams) =>
+    request<StrategyConfigResponse>("/strategy-research/configs", {
+      method: "PUT",
+      body: JSON.stringify({ strategy, params }),
+    }),
+
+  deleteStrategyConfig: (strategy: string) =>
+    request<StrategyConfigResponse>(`/strategy-research/configs?strategy=${encodeURIComponent(strategy)}`, {
+      method: "DELETE",
+    }),
 };
 
 // --- Swarm types ---
@@ -1153,4 +1200,106 @@ export interface WatchlistItem {
   current_position?: number;
   current_updated?: string;
   notes?: string;
+}
+
+// --- Strategy Research types ---
+
+export interface TradingDaysResponse {
+  dates: string[];
+  latest: string | null;
+}
+
+export interface SectorListResponse {
+  sectors: { bk_code: string; bk_name: string }[];
+}
+
+export interface SectorMemberItem {
+  code: string;
+  name: string;
+  price: number;
+  change_pct: number;
+  concepts: string[];
+  industries: string[];
+}
+
+export interface SectorMembersResponse {
+  bk_code: string;
+  bk_name: string;
+  sector_type: string;
+  members: SectorMemberItem[];
+}
+
+export interface BacktestRequest {
+  codes: string[];
+  start_date: string;
+  end_date: string;
+  strategy: string;
+  params?: StrategyConfigParams | Record<string, number>;
+}
+
+export interface StrategyConfigParams {
+  up_phase_min_bars: number;
+  volume_surge_ratio: number;
+  big_bull_body_ratio: number;
+  inv_hammer_shadow_ratio: number;
+  close_above_prev_mid: number;
+  stop_loss_pct: number;
+  divergence_repair_bars: number;
+}
+
+export interface StrategyConfigResponse {
+  strategy: string;
+  params: StrategyConfigParams;
+  is_default: boolean;
+}
+
+export interface SignalPoint {
+  date: string;
+  type: string;
+  price: number;
+  signal_value: number;
+}
+
+export interface OHLCSnapshotBar {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  has_signal: boolean;
+}
+
+export interface BacktestSummaryItem {
+  code: string;
+  name: string;
+  final_state: string;
+  trade_count: number;
+  win_rate: number;
+  win_count: number;
+  loss_count: number;
+  cumulative_return: number;
+  annual_return: number;
+  max_drawdown: number;
+  sharpe: number;
+  bsk_count: number;
+  ck_count: number;
+  latest_signal: SignalPoint | null;
+  signal_points: SignalPoint[];
+  equity_curve: EquityPoint[];
+  states_summary: Record<string, number>;
+  ohlcv_snapshot: OHLCSnapshotBar[];
+}
+
+export type BacktestDetailItem = BacktestSummaryItem;
+
+export interface StockResultEvent {
+  done: number;
+  summary: BacktestSummaryItem;
+}
+
+export interface BacktestProgressEvent {
+  done: number;
+  total: number;
+  current_code: string | null;
 }

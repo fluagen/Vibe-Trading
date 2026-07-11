@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useSearchParams } from "react-router-dom";
-import { Activity, BarChart3, Bot, Crosshair, Languages, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers, TrendingUp, Loader2 } from "lucide-react";
+import { Activity, BarChart3, Bot, Crosshair, FlaskConical, Languages, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers, TrendingUp, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { api, type SessionItem } from "@/lib/api";
@@ -23,6 +23,7 @@ export function Layout() {
     { to: "/correlation", icon: BarChart3, label: t('layout.correlation') },
     { to: "/sentiment", icon: TrendingUp, label: t('layout.sentiment') },
     { to: "/opportunity-pool", icon: Crosshair, label: t('layout.opportunityPool') },
+    { to: "/strategy-research", icon: FlaskConical, label: t('layout.strategyResearch') },
   ];
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();

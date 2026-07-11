@@ -28,6 +28,9 @@ const Sentiment = lazy(() =>
 const OpportunityPool = lazy(() =>
   import("@/pages/OpportunityPool").then((m) => ({ default: m.OpportunityPool })),
 );
+const StrategyResearch = lazy(() =>
+  import("@/pages/StrategyResearch").then((m) => ({ default: m.StrategyResearch })),
+);
 
 function PageLoader() {
   return (
@@ -62,6 +65,7 @@ export const router = createBrowserRouter([
       { path: "/alpha-zoo/:alphaId", element: wrap(AlphaZoo) },
       { path: "/sentiment", element: wrap(Sentiment) },
       { path: "/opportunity-pool", element: wrap(OpportunityPool) },
+      { path: "/strategy-research", element: wrap(StrategyResearch) },
     ],
   },
 ]);
