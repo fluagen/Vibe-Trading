@@ -1270,6 +1270,21 @@ export interface OHLCSnapshotBar {
   has_signal: boolean;
 }
 
+export interface TradeSignal {
+  date: string;
+  type: string;
+  price: number;
+  signal_value: number;
+  description: string;
+}
+
+export interface TradeRecord {
+  trade_index: number;
+  signals: TradeSignal[];
+  return_pct: number;
+  is_win: boolean;
+}
+
 export interface BacktestSummaryItem {
   code: string;
   name: string;
@@ -1286,6 +1301,10 @@ export interface BacktestSummaryItem {
   ck_count: number;
   latest_signal: SignalPoint | null;
   signal_points: SignalPoint[];
+  trades: TradeRecord[];
+  trading_days: number;
+  date_start: string;
+  date_end: string;
   equity_curve: EquityPoint[];
   states_summary: Record<string, number>;
   ohlcv_snapshot: OHLCSnapshotBar[];

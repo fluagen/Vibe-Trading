@@ -116,14 +116,14 @@ export function StrategyConfigTab() {
 
   const renderParamGroup = (title: string, defs: ParamDef[]) => (
     <div className="mb-4">
-      <h3 className="mb-3 text-sm font-medium text-slate-300">{title}</h3>
+      <h3 className="mb-3 text-sm font-medium text-foreground">{title}</h3>
       <div className="grid grid-cols-2 gap-x-8 gap-y-4">
         {defs.map((d) => {
           const value = params[d.key];
           return (
             <div key={d.key} className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs text-slate-400">
+                <label className="text-xs text-muted-foreground">
                   {t(`strategyResearch.param_${d.key}`)}
                 </label>
                 <div className="flex items-center gap-1">
@@ -137,12 +137,12 @@ export function StrategyConfigTab() {
                       const v = parseFloat(e.target.value);
                       if (!isNaN(v)) updateParam(d.key, d.isInt ? Math.round(v) : v);
                     }}
-                    className="w-16 rounded border border-slate-600 bg-slate-800 px-1.5 py-0.5 text-right text-xs text-slate-200"
+                    className="w-16 rounded border border-border bg-card px-1.5 py-0.5 text-right text-xs text-foreground"
                   />
                   {value !== DEFAULTS[d.key] && (
                     <button
                       onClick={() => resetParam(d.key)}
-                      className="text-xs text-slate-500 hover:text-slate-300"
+                      className="text-xs text-muted-foreground hover:text-foreground"
                       title={t("strategyResearch.resetDefault")}
                     >
                       ↺
@@ -157,7 +157,7 @@ export function StrategyConfigTab() {
                 step={d.step}
                 value={value}
                 onChange={(e) => updateParam(d.key, parseFloat(e.target.value))}
-                className="h-1.5 w-full cursor-pointer appearance-none rounded bg-slate-700 accent-emerald-500"
+                className="h-1.5 w-full cursor-pointer appearance-none rounded bg-muted accent-emerald-500"
               />
               <div className="flex justify-between text-[10px] text-slate-600">
                 <span>{fmtVal(d.min, d.isInt)}</span>
@@ -174,11 +174,11 @@ export function StrategyConfigTab() {
     <div className="flex flex-col gap-4">
       {/* Strategy selector */}
       <div className="flex items-center gap-3">
-        <label className="text-xs text-slate-500">{t("strategyResearch.strategy")}</label>
+        <label className="text-xs text-muted-foreground">{t("strategyResearch.strategy")}</label>
         <select
           value={selectedStrategy}
           onChange={(e) => setSelectedStrategy(e.target.value)}
-          className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200"
+          className="rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
         >
           {strategies.map((s) => (
             <option key={s} value={s}>
@@ -189,7 +189,7 @@ export function StrategyConfigTab() {
       </div>
 
       {loading ? (
-        <div className="text-xs text-slate-500">Loading...</div>
+        <div className="text-xs text-muted-foreground">Loading...</div>
       ) : (
         <>
           {renderParamGroup(t("strategyResearch.entryParams"), ENTRY_PARAMS)}
@@ -205,7 +205,7 @@ export function StrategyConfigTab() {
             </button>
             <button
               onClick={handleResetAll}
-              className="rounded border border-slate-600 px-4 py-1.5 text-sm text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+              className="rounded border border-border px-4 py-1.5 text-sm text-muted-foreground hover:bg-card hover:text-foreground"
             >
               {t("strategyResearch.resetDefault")}
             </button>

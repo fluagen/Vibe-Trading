@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FlaskConical, Play, Search, SlidersHorizontal } from "lucide-react";
 import {
   api,
   type SectorMemberItem,
@@ -23,6 +24,8 @@ const STATE_LABELS: Record<string, string> = {
   no_structure: "无结构", forming: "形成中", up_phase: "上涨", pullback: "回调", breakdown: "崩坏",
 };
 
+const DATE_PRESETS: DatePreset[] = ["30", "60", "120", "250", "custom"];
+
 export function StrategyResearch() {
   const { t } = useTranslation();
 
@@ -31,6 +34,8 @@ export function StrategyResearch() {
   const [sectorType, setSectorType] = useState<SectorType>("industry");
   const [sectors, setSectors] = useState<{ bk_code: string; bk_name: string }[]>([]);
   const [selectedSector, setSelectedSector] = useState("");
+  const [sectorSearch, setSectorSearch] = useState("");
+  const [showSectorDropdown, setShowSectorDropdown] = useState(false);
   const [members, setMembers] = useState<SectorMemberItem[]>([]);
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
   const [datePreset, setDatePreset] = useState<DatePreset>("30");
@@ -44,12 +49,34 @@ export function StrategyResearch() {
   const [selectedResultCode, setSelectedResultCode] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  // Tab & params state
   const [activeTab, setActiveTab] = useState<"config" | "backtest">("backtest");
   const [backtestParams, setBacktestParams] = useState<StrategyConfigParams | null>(null);
   const [showParamsOverride, setShowParamsOverride] = useState(false);
 
-  // Load saved config for backtest params
+  const [showMembers, setShowMembers] = useState(true);
+  const [showResults, setShowResults] = useState(true);
+
+  // Members pagination
+  const [memberPage, setMemberPage] = useState(1);
+  const [memberPageSize, setMemberPageSize] = useState(20);
+  const totalMemberPages = Math.max(1, Math.ceil(members.length / memberPageSize));
+  const safeMemberPage = Math.min(memberPage, totalMemberPages);
+  const pagedMembers = members.slice((safeMemberPage - 1) * memberPageSize, safeMemberPage * memberPageSize);
+
+  // Results pagination
+  const [resultPage, setResultPage] = useState(1);
+  const [resultPageSize, setResultPageSize] = useState(20);
+  const totalResultPages = Math.max(1, Math.ceil(results.length / resultPageSize));
+  const safeResultPage = Math.min(resultPage, totalResultPages);
+  const pagedResults = results.slice((safeResultPage - 1) * resultPageSize, safeResultPage * resultPageSize);
+
+  // Code → name lookup from members
+  const codeToName = useMemo(() => {
+    const map: Record<string, string> = {};
+    members.forEach((m) => { map[m.code] = m.name; });
+    return map;
+  }, [members]);
+
   useEffect(() => {
     api.getStrategyConfig("up_trend_structure")
       .then((res) => setBacktestParams(res.params))
@@ -70,8 +97,18 @@ export function StrategyResearch() {
       .catch(() => toast.error(t("strategyResearch.loadFailed")));
   }, [sectorType, t]);
 
-  const handleSectorSelect = useCallback(async (bkCode: string) => {
+  const filteredSectors = useMemo(() => {
+    if (!sectorSearch) return sectors.slice(0, 20);
+    const q = sectorSearch.toLowerCase();
+    return sectors.filter((s) =>
+      s.bk_name.toLowerCase().includes(q) || s.bk_code.toLowerCase().includes(q)
+    ).slice(0, 15);
+  }, [sectors, sectorSearch]);
+
+  const handleSectorSelect = useCallback(async (bkCode: string, bkName: string) => {
     setSelectedSector(bkCode);
+    setSectorSearch(bkName);
+    setShowSectorDropdown(false);
     if (!bkCode) { setMembers([]); setSelectedCodes(new Set()); return; }
     setLoadingMembers(true);
     try {
@@ -149,23 +186,56 @@ export function StrategyResearch() {
 
   useEffect(() => () => eventSourceRef.current?.close(), []);
 
+  // Reset pagination when data changes
+  useEffect(() => { setMemberPage(1); }, [members.length]);
+  useEffect(() => { setResultPage(1); }, [results.length]);
+
   const detailData = results.find((r) => r.code === selectedResultCode) || null;
+  const hasSelection = selectedCodes.size > 0;
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-auto p-6">
-      <h1 className="text-lg font-bold text-slate-100">{t("strategyResearch.title")}</h1>
-
-      {/* Tab Bar */}
-      <div className="flex rounded border border-slate-700 bg-slate-800 w-fit">
-        {(["backtest", "config"] as const).map((tab) => (
+    <div className="flex h-full flex-col gap-5 overflow-auto p-6">
+      {/* Header row: icon + title | tabs | params button */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+              <FlaskConical size={16} className="text-primary" />
+            </div>
+            <h1 className="text-lg font-semibold text-foreground tracking-tight">
+              {t("strategyResearch.title")}
+            </h1>
+          </div>
+          <div className="h-5 w-px bg-border" />
+          <div className="flex rounded-md border border-border bg-card p-0.5">
+            {(["backtest", "config"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-3.5 py-1.5 text-xs font-medium rounded-sm transition-colors ${
+                  activeTab === tab
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {t(`strategyResearch.${tab}Tab`)}
+              </button>
+            ))}
+          </div>
+        </div>
+        {activeTab === "backtest" && backtestParams && (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-1.5 text-sm rounded ${activeTab === tab ? "bg-slate-700 text-slate-100" : "text-slate-400"}`}
+            onClick={() => setShowParamsOverride(!showParamsOverride)}
+            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-colors ${
+              showParamsOverride
+                ? "bg-primary/10 text-primary border border-primary/20"
+                : "text-muted-foreground hover:text-foreground border border-transparent hover:border-border"
+            }`}
           >
-            {t(`strategyResearch.${tab}Tab`)}
+            <SlidersHorizontal size={13} />
+            参数
           </button>
-        ))}
+        )}
       </div>
 
       {/* Config Tab */}
@@ -174,199 +244,341 @@ export function StrategyResearch() {
       {/* Backtest Tab */}
       {activeTab === "backtest" && (
       <>
-      {/* Filter Controls */}
-      <div className="flex flex-wrap items-end gap-3">
-        <div>
-          <label className="mb-1 block text-xs text-slate-500">{t("strategyResearch.tradingDay")}</label>
-          <select value={tradingDay} onChange={(e) => setTradingDay(e.target.value)}
-            className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200">
-            {availableDays.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
+      {/* Params panel — slides open */}
+      {showParamsOverride && backtestParams && (
+        <div className="grid grid-cols-4 gap-x-5 gap-y-2.5 rounded-lg border border-primary/20 bg-primary/5 p-4">
+          {Object.entries(backtestParams).map(([key, value]) => (
+            <div key={key} className="flex items-center gap-2.5">
+              <label className="text-xs text-muted-foreground min-w-0 flex-1 truncate">
+                {t(`strategyResearch.param_${key}`)}
+              </label>
+              <input type="number" step="any" value={value}
+                onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v)) setBacktestParams((prev) => prev ? { ...prev, [key]: v } : null); }}
+                className="w-20 rounded border border-border bg-card px-2 py-1 text-xs font-mono text-foreground focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/20" />
+            </div>
+          ))}
         </div>
-        <div>
-          <label className="mb-1 block text-xs text-slate-500">{t("strategyResearch.sectorType")}</label>
-          <div className="flex rounded border border-slate-700 bg-slate-800">
-            {(["industry", "concept"] as SectorType[]).map((st) => (
-              <button key={st} onClick={() => { setSectorType(st); setSelectedSector(""); setMembers([]); }}
-                className={`px-3 py-1 text-sm ${sectorType === st ? "bg-slate-700 text-slate-100" : "text-slate-400"} rounded`}>
-                {t(`strategyResearch.${st}`)}
-              </button>
-            ))}
+      )}
+
+      {/* Command bar — unified controls */}
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
+        <select value={tradingDay} onChange={(e) => setTradingDay(e.target.value)}
+          className="rounded border-0 bg-muted/50 px-2.5 py-1.5 text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30">
+          {availableDays.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+
+        <div className="h-5 w-px bg-border" />
+
+        <div className="flex rounded bg-muted/50 p-0.5">
+          {(["industry", "concept"] as SectorType[]).map((st) => (
+            <button key={st}
+              onClick={() => { setSectorType(st); setSelectedSector(""); setSectorSearch(""); setMembers([]); }}
+              className={`px-2.5 py-1 text-xs rounded-sm font-medium transition-colors ${
+                sectorType === st ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}>
+              {t(`strategyResearch.${st}`)}
+            </button>
+          ))}
+        </div>
+
+        <div className="relative">
+          <div className="relative">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <input type="text" value={sectorSearch}
+              onChange={(e) => { setSectorSearch(e.target.value); setShowSectorDropdown(true); }}
+              onFocus={() => setShowSectorDropdown(true)}
+              onBlur={() => setTimeout(() => setShowSectorDropdown(false), 150)}
+              placeholder="搜索板块..."
+              className="w-36 rounded border-0 bg-muted/50 pl-7 pr-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-primary/30" />
           </div>
+          {showSectorDropdown && filteredSectors.length > 0 && (
+            <div className="absolute z-10 mt-1 w-64 max-h-56 overflow-y-auto rounded-lg border border-border bg-card shadow-lg py-1">
+              {filteredSectors.map((s) => (
+                <button key={s.bk_code} type="button"
+                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors flex justify-between items-center ${
+                    selectedSector === s.bk_code ? "bg-primary/5 text-primary" : "text-foreground"
+                  }`}
+                  onMouseDown={() => handleSectorSelect(s.bk_code, s.bk_name)}>
+                  <span className="font-medium">{s.bk_name}</span>
+                  <span className="text-[10px] text-muted-foreground font-mono">{s.bk_code}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-        <div>
-          <label className="mb-1 block text-xs text-slate-500">{t("strategyResearch.selectSectors")}</label>
-          <select value={selectedSector} onChange={(e) => handleSectorSelect(e.target.value)}
-            className="max-w-[200px] rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200">
-            <option value="">--</option>
-            {sectors.map((s) => <option key={s.bk_code} value={s.bk_code}>{s.bk_name}</option>)}
-          </select>
+
+        <div className="h-5 w-px bg-border" />
+
+        <div className="flex rounded bg-muted/50 p-0.5">
+          {DATE_PRESETS.map((p) => (
+            <button key={p} onClick={() => setDatePreset(p)}
+              className={`px-2 py-1 text-xs rounded-sm font-medium transition-colors ${
+                datePreset === p ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}>
+              {p === "custom" ? t("strategyResearch.customRange") : p}
+            </button>
+          ))}
         </div>
-        <div>
-          <label className="mb-1 block text-xs text-slate-500">{t("strategyResearch.dateRange")}</label>
-          <div className="flex rounded border border-slate-700 bg-slate-800">
-            {(["30", "60", "120", "250", "custom"] as DatePreset[]).map((p) => (
-              <button key={p} onClick={() => setDatePreset(p)}
-                className={`px-2 py-1 text-xs ${datePreset === p ? "bg-slate-700 text-slate-100" : "text-slate-400"} rounded`}>
-                {p === "custom" ? t("strategyResearch.customRange") : t(`strategyResearch.last${p}Days`)}
-              </button>
-            ))}
-          </div>
-        </div>
+
         {datePreset === "custom" && (
           <>
-            <div><label className="mb-1 block text-xs text-slate-500">{t("strategyResearch.startDate")}</label>
-              <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)}
-                className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200" /></div>
-            <div><label className="mb-1 block text-xs text-slate-500">{t("strategyResearch.endDate")}</label>
-              <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)}
-                className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200" /></div>
+            <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)}
+              className="rounded border-0 bg-muted/50 px-2 py-1.5 text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 w-32" />
+            <span className="text-xs text-muted-foreground">—</span>
+            <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)}
+              className="rounded border-0 bg-muted/50 px-2 py-1.5 text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 w-32" />
           </>
         )}
-        <button onClick={handleStartBacktest} disabled={backtesting || selectedCodes.size === 0}
-          className="rounded bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50">
+
+        <div className="flex-1" />
+
+        <button onClick={handleStartBacktest} disabled={backtesting || !hasSelection}
+          className={`inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-xs font-semibold transition-all ${
+            backtesting
+              ? "bg-muted text-muted-foreground cursor-wait"
+              : hasSelection
+                ? "bg-primary text-primary-foreground hover:brightness-110 shadow-sm shadow-primary/20"
+                : "bg-muted text-muted-foreground cursor-not-allowed"
+          }`}>
+          {backtesting ? (
+            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+          ) : (
+            <Play size={13} />
+          )}
           {backtesting ? t("strategyResearch.backtesting") : t("strategyResearch.startBacktest")}
         </button>
       </div>
 
-      {/* Backtest Params Override (collapsible) */}
-      <div>
-        <button
-          onClick={() => setShowParamsOverride(!showParamsOverride)}
-          className="text-xs text-slate-500 hover:text-slate-300"
-        >
-          {showParamsOverride ? "▾" : "▸"} 回测参数{backtestParams && "（已加载配置）"}
-        </button>
-        {showParamsOverride && backtestParams && (
-          <div className="mt-2 grid grid-cols-4 gap-x-4 gap-y-2 rounded border border-slate-700 bg-slate-800/50 p-3">
-            {Object.entries(backtestParams).map(([key, value]) => (
-              <div key={key} className="flex items-center gap-2">
-                <label className="text-xs text-slate-400 w-36">{t(`strategyResearch.param_${key}`)}</label>
-                <input
-                  type="number"
-                  value={value}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    if (!isNaN(v)) setBacktestParams((prev) => prev ? { ...prev, [key]: v } : null);
-                  }}
-                  className="w-20 rounded border border-slate-600 bg-slate-800 px-1.5 py-0.5 text-xs text-slate-200"
-                />
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Sector Members Table */}
-      {members.length > 0 && (
-        <div>
-          <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
-            <span>
-              {t("strategyResearch.constituentStocks")} ({members.length}) — 已选 {selectedCodes.size} 只
-            </span>
-            <button onClick={toggleAll} className="text-slate-400 hover:text-slate-200">
-              {selectedCodes.size === members.length ? "取消全选" : "全选"}
-            </button>
-          </div>
-          <div className="max-h-[400px] overflow-auto rounded-lg border border-slate-700">
-            <table className="w-full text-xs text-slate-300">
-              <thead className="sticky top-0 bg-slate-900">
-                <tr className="border-b border-slate-700 text-slate-500">
-                  <th className="w-8 px-2 py-2">
-                    <input type="checkbox" checked={selectedCodes.size === members.length && members.length > 0} onChange={toggleAll} />
-                  </th>
-                  <th className="px-2 py-2 text-left">代码</th>
-                  <th className="px-2 py-2 text-left">名称</th>
-                  <th className="px-2 py-2 text-right">最新价</th>
-                  <th className="px-2 py-2 text-right">涨跌幅</th>
-                  <th className="px-2 py-2 text-left">所属概念</th>
-                  <th className="px-2 py-2 text-left">所属行业</th>
-                </tr>
-              </thead>
-              <tbody>
-                {members.map((m) => {
-                  const sel = selectedCodes.has(m.code);
-                  return (
-                    <tr key={m.code} onClick={() => toggleStock(m.code)}
-                      className={`cursor-pointer border-b border-slate-800 hover:bg-slate-800/50 ${sel ? "bg-slate-800/70" : ""}`}>
-                      <td className="px-2 py-1.5">
-                        <input type="checkbox" checked={sel} onChange={() => toggleStock(m.code)} />
-                      </td>
-                      <td className="px-2 py-1.5 font-mono">{m.code}</td>
-                      <td className="px-2 py-1.5">{m.name}</td>
-                      <td className="px-2 py-1.5 text-right">{m.price?.toFixed(2) || "—"}</td>
-                      <td className={`px-2 py-1.5 text-right ${m.change_pct >= 0 ? "text-red-400" : "text-emerald-400"}`}>
-                        {m.change_pct != null ? `${m.change_pct > 0 ? "+" : ""}${m.change_pct.toFixed(2)}%` : "—"}
-                      </td>
-                      <td className="max-w-[200px] truncate px-2 py-1.5" title={m.concepts?.join(", ")}>
-                        {m.concepts?.slice(0, 3).join(", ") || "—"}{m.concepts && m.concepts.length > 3 ? ` +${m.concepts.length - 3}` : ""}
-                      </td>
-                      <td className="max-w-[150px] truncate px-2 py-1.5" title={m.industries?.join(" → ")}>
-                        {m.industries?.join(" → ") || "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {loadingMembers && <div className="text-xs text-slate-500">加载中...</div>}
-
-      {/* Backtest Progress */}
+      {/* Progress indicator */}
       {backtesting && progress && (
-        <div>
-          <div className="mb-1 flex justify-between text-xs text-slate-500">
-            <span>{progress.current}</span><span>{progress.done}/{progress.total}</span>
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5">
+          <div className="flex-1 h-1 rounded-full bg-muted overflow-hidden">
+            <div className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
+              style={{ width: `${(progress.done / progress.total) * 100}%` }} />
           </div>
-          <div className="h-1.5 rounded-full bg-slate-800">
-            <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
-          </div>
+          <span className="text-[11px] font-mono text-muted-foreground tabular-nums whitespace-nowrap">
+            {progress.done}/{progress.total}
+          </span>
         </div>
       )}
 
-      {/* Backtest Results */}
+      {/* Constituent stocks */}
+      {members.length > 0 && (
+        <div className="rounded-lg border border-border overflow-hidden">
+          <button onClick={() => setShowMembers(!showMembers)}
+            className="flex w-full items-center justify-between px-4 py-2.5 bg-muted/30 hover:bg-muted/50 transition-colors select-none">
+            <div className="flex items-center gap-3">
+              <h2 className="text-xs font-semibold text-foreground tracking-wide uppercase">成分股</h2>
+              <span className="text-[11px] tabular-nums text-muted-foreground">{members.length} 只</span>
+              {selectedCodes.size > 0 && (
+                <span className="text-[10px] font-medium text-primary bg-primary/10 rounded-full px-2 py-0.5">
+                  已选 {selectedCodes.size}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span onClick={(e) => { e.stopPropagation(); toggleAll(); }}
+                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2 py-0.5 rounded hover:bg-muted">
+                {selectedCodes.size === members.length ? "取消全选" : "全选"}
+              </span>
+              {showMembers ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+            </div>
+          </button>
+          {showMembers && (
+            <>
+              <div className="max-h-[360px] overflow-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm">
+                    <tr className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                      <th className="w-8 px-2 py-2"><input type="checkbox" checked={selectedCodes.size === members.length && members.length > 0} onChange={toggleAll} className="rounded" /></th>
+                      <th className="px-2 py-2 text-left font-medium">代码</th>
+                      <th className="px-2 py-2 text-left font-medium">名称</th>
+                      <th className="px-2 py-2 text-right font-medium">最新价</th>
+                      <th className="px-2 py-2 text-right font-medium">涨跌幅</th>
+                      <th className="px-2 py-2 text-left font-medium">概念</th>
+                      <th className="px-2 py-2 text-left font-medium">行业</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {pagedMembers.map((m) => {
+                    const sel = selectedCodes.has(m.code);
+                    return (
+                      <tr key={m.code} onClick={() => toggleStock(m.code)}
+                        className={`cursor-pointer transition-colors hover:bg-muted/40 ${sel ? "bg-primary/5 hover:bg-primary/8" : ""}`}>
+                        <td className="px-2 py-1.5"><input type="checkbox" checked={sel} onChange={() => toggleStock(m.code)} className="rounded" /></td>
+                        <td className="px-2 py-1.5 font-mono tabular-nums text-foreground/90">{m.code}</td>
+                        <td className="px-2 py-1.5 text-foreground/90">{m.name}</td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums">{m.price?.toFixed(2) || "—"}</td>
+                        <td className={`px-2 py-1.5 text-right font-mono tabular-nums ${(m.change_pct ?? 0) >= 0 ? "text-red-500" : "text-emerald-500"}`}>
+                          {m.change_pct != null ? `${m.change_pct > 0 ? "+" : ""}${m.change_pct.toFixed(2)}%` : "—"}
+                        </td>
+                        <td className="max-w-[180px] truncate px-2 py-1.5 text-muted-foreground" title={m.concepts?.join(", ")}>
+                          {m.concepts?.slice(0, 3).join(", ") || "—"}
+                          {m.concepts && m.concepts.length > 3 ? <span className="text-[10px] text-muted-foreground/60"> +{m.concepts.length - 3}</span> : ""}
+                        </td>
+                        <td className="max-w-[140px] truncate px-2 py-1.5 text-muted-foreground" title={m.industries?.join(" → ")}>
+                          {m.industries?.join(" → ") || "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Members pagination */}
+            {members.length > memberPageSize && (
+              <div className="px-4 py-2.5 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <span>每页</span>
+                  <select value={memberPageSize} onChange={(e) => { setMemberPageSize(Number(e.target.value)); setMemberPage(1); }}
+                    className="border border-border rounded px-1.5 py-0.5 text-xs bg-card text-foreground">
+                    {[20, 50, 100].map((n) => (<option key={n} value={n}>{n}</option>))}
+                  </select>
+                  <span>条</span>
+                </div>
+                <span>第 {safeMemberPage}/{totalMemberPages} 页，共 {members.length} 条</span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setMemberPage(1)} disabled={safeMemberPage <= 1}
+                    className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">首页</button>
+                  <button onClick={() => setMemberPage((p) => Math.max(1, p - 1))} disabled={safeMemberPage <= 1}
+                    className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">
+                    <ChevronLeft size={12} />
+                  </button>
+                  <button onClick={() => setMemberPage((p) => Math.min(totalMemberPages, p + 1))} disabled={safeMemberPage >= totalMemberPages}
+                    className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">
+                    <ChevronRight size={12} />
+                  </button>
+                  <button onClick={() => setMemberPage(totalMemberPages)} disabled={safeMemberPage >= totalMemberPages}
+                    className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">末页</button>
+                </div>
+              </div>
+            )}
+            </>
+          )}
+        </div>
+      )}
+
+      {loadingMembers && (
+        <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+          加载成分股...
+        </div>
+      )}
+
+      {/* Backtest results */}
       {results.length > 0 && (
-        <div className="overflow-auto rounded-lg border border-slate-700">
-          <table className="w-full text-sm text-slate-300">
-            <thead>
-              <tr className="border-b border-slate-700 text-xs text-slate-500">
-                <th className="px-2 py-2 text-left">{t("strategyResearch.code")}</th>
-                <th className="px-2 py-2 text-left">{t("strategyResearch.currentState")}</th>
-                <th className="px-2 py-2 text-right">{t("strategyResearch.tradeCount")}</th>
-                <th className="px-2 py-2 text-right">{t("strategyResearch.winRate")}</th>
-                <th className="px-2 py-2 text-right">止跌K</th>
-                <th className="px-2 py-2 text-right">证伪K</th>
-                <th className="px-2 py-2 text-right">{t("strategyResearch.cumulativeReturn")}</th>
-                <th className="px-2 py-2">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((r) => (
-                <tr key={r.code} className={`border-b border-slate-800 hover:bg-slate-800/50 ${selectedResultCode === r.code ? "bg-slate-800/70" : ""}`}>
-                  <td className="px-2 py-2 font-mono text-xs">{r.code}</td>
-                  <td className="px-2 py-2"><span className={`rounded-full px-1.5 py-0.5 text-xs text-white ${STATE_COLORS[r.final_state] || "bg-slate-500"}`}>{STATE_LABELS[r.final_state] || r.final_state}</span></td>
-                  <td className="px-2 py-2 text-right">{r.trade_count}</td>
-                  <td className="px-2 py-2 text-right">{(r.win_rate * 100).toFixed(0)}%</td>
-                  <td className="px-2 py-2 text-right">{r.bsk_count ?? "—"}</td>
-                  <td className="px-2 py-2 text-right">{r.ck_count ?? "—"}</td>
-                  <td className={`px-2 py-2 text-right font-mono ${r.cumulative_return >= 0 ? "text-emerald-400" : "text-red-400"}`}>{(r.cumulative_return * 100).toFixed(2)}%</td>
-                  <td className="px-2 py-2">
-                    <button onClick={() => setSelectedResultCode(selectedResultCode === r.code ? null : r.code)}
-                      className="rounded px-2 py-0.5 text-xs text-slate-400 hover:bg-slate-700 hover:text-slate-200">
-                      {selectedResultCode === r.code ? t("strategyResearch.closeDetail") : t("strategyResearch.viewDetail")}
+        <div className="rounded-lg border border-border overflow-hidden">
+          <button onClick={() => setShowResults(!showResults)}
+            className="flex w-full items-center justify-between px-4 py-2.5 bg-muted/30 hover:bg-muted/50 transition-colors select-none">
+            <div className="flex items-center gap-3">
+              <h2 className="text-xs font-semibold text-foreground tracking-wide uppercase">回测结果</h2>
+              <span className="text-[11px] tabular-nums text-muted-foreground">{results.length} 只</span>
+              <span className="text-[10px] text-muted-foreground">
+                平均胜率 {results.length > 0 ? `${(results.reduce((s, r) => s + r.win_rate, 0) / results.length * 100).toFixed(0)}%` : "—"}
+              </span>
+            </div>
+            {showResults ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+          </button>
+          {showResults && (
+            <>
+              <div className="max-h-[450px] overflow-y-auto overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/30 backdrop-blur-sm sticky top-0 z-10">
+                    <tr className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                      <th className="px-3 py-2 text-left font-medium">代码</th>
+                      <th className="px-3 py-2 text-left font-medium">名称</th>
+                      <th className="px-3 py-2 text-left font-medium">状态</th>
+                      <th className="px-3 py-2 text-right font-medium">交易</th>
+                      <th className="px-3 py-2 text-right font-medium">胜率</th>
+                      <th className="px-3 py-2 text-right font-medium">止跌K</th>
+                      <th className="px-3 py-2 text-right font-medium">证伪K</th>
+                      <th className="px-3 py-2 text-right font-medium">累计收益</th>
+                      <th className="px-3 py-2 text-center font-medium w-16">详情</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {pagedResults.map((r) => {
+                      const isOpen = selectedResultCode === r.code;
+                      return (
+                        <>
+                          <tr key={r.code}
+                            onClick={() => setSelectedResultCode(isOpen ? null : r.code)}
+                            className={`cursor-pointer transition-colors hover:bg-muted/40 ${isOpen ? "bg-primary/5 hover:bg-primary/8" : ""}`}>
+                            <td className="px-3 py-2.5 font-mono tabular-nums text-foreground font-medium">{r.code}</td>
+                            <td className="px-3 py-2.5 text-xs text-foreground/80 truncate max-w-[80px]" title={codeToName[r.code] || r.name || ""}>
+                              {codeToName[r.code] || r.name || r.code}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-white ${STATE_COLORS[r.final_state] || "bg-slate-500"}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${isOpen ? "bg-white" : "bg-white/60"}`} />
+                                {STATE_LABELS[r.final_state] || r.final_state}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums font-mono">{r.trade_count}</td>
+                            <td className={`px-3 py-2.5 text-right tabular-nums font-mono ${
+                              r.win_rate >= 0.5 ? "text-emerald-500" : r.win_rate > 0 ? "text-amber-500" : "text-red-500"
+                            }`}>{(r.win_rate * 100).toFixed(0)}%</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums font-mono text-muted-foreground">{r.bsk_count ?? "—"}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums font-mono text-muted-foreground">{r.ck_count ?? "—"}</td>
+                            <td className={`px-3 py-2.5 text-right tabular-nums font-mono font-medium ${
+                              r.cumulative_return >= 0 ? "text-red-500" : "text-emerald-500"
+                            }`}>{r.cumulative_return >= 0 ? "+" : ""}{(r.cumulative_return * 100).toFixed(2)}%</td>
+                            <td className="px-3 py-2.5 text-center">
+                              <span className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                                isOpen ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                              }`}>{isOpen ? "收起" : "展开"}</span>
+                            </td>
+                          </tr>
+                          {isOpen && detailData && (
+                            <tr key={`${r.code}-detail`}>
+                              <td colSpan={9} className="px-4 py-3 bg-muted/15 border-t border-primary/10">
+                                <DetailPanel data={detailData} onClose={() => setSelectedResultCode(null)} />
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {results.length > resultPageSize && (
+                <div className="px-4 py-2.5 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <span>每页</span>
+                    <select
+                      value={resultPageSize}
+                      onChange={(e) => { setResultPageSize(Number(e.target.value)); setResultPage(1); }}
+                      className="border border-border rounded px-1.5 py-0.5 text-xs bg-card text-foreground"
+                    >
+                      {[20, 50, 100].map((n) => (<option key={n} value={n}>{n}</option>))}
+                    </select>
+                    <span>条</span>
+                  </div>
+                  <span>第 {safeResultPage}/{totalResultPages} 页，共 {results.length} 条</span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setResultPage(1)} disabled={safeResultPage <= 1}
+                      className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">首页</button>
+                    <button onClick={() => setResultPage((p) => Math.max(1, p - 1))} disabled={safeResultPage <= 1}
+                      className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">
+                      <ChevronLeft size={12} />
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    <button onClick={() => setResultPage((p) => Math.min(totalResultPages, p + 1))} disabled={safeResultPage >= totalResultPages}
+                      className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">
+                      <ChevronRight size={12} />
+                    </button>
+                    <button onClick={() => setResultPage(totalResultPages)} disabled={safeResultPage >= totalResultPages}
+                      className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">末页</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
-
-      {detailData && <DetailPanel data={detailData} onClose={() => setSelectedResultCode(null)} />}
       </>
       )}
     </div>
