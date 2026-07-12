@@ -148,8 +148,9 @@ class SignalEngine:
                         ma_short_taken = False
                         continue
 
-                # --- Entry: 止跌K in forming → trial entry ---
-                if state == "forming" and bsk and position_size == 0.0:
+                # --- Entry: 止跌K only when pullback → forming ---
+                prev_state = states["state"].iloc[i - 1] if i > 0 else ""
+                if state == "forming" and bsk and position_size == 0.0 and prev_state == "pullback":
                     signals.iloc[i] = 0.33
                     position_size = 0.33
                     entry_prices = [close]
