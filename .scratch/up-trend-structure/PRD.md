@@ -1,149 +1,188 @@
-# 上涨结构交易策略 — PRD
+# 上涨结构交易策略 v2 — 量价关系驱动的状态机重构
 
 **Status:** ready-for-agent
 **Created:** 2026-07-05
+**Updated:** 2026-07-12
 **Author:** fluagen
 
 ## Problem Statement
 
-交易者从课程学习中掌握了 "上涨结构" 交易方法论（基于量价关系的趋势跟踪战法），但目前只能在飞书文档中手动查阅课件，无法系统性地将这套方法论应用于实际选股和交易决策。需要将这套主观交易方法论量化为可执行的信号引擎，接入现有的回测系统进行验证和优化。
+当前 v1 策略存在以下问题：
+
+1. 上涨阶段（up_phase）进入依赖 止跌K → 证伪K 单次形态确认，而非对持续量价关系的验证。一根证伪K不足以确认上涨趋势的成立。
+2. `up_phase_min_bars` 参数存在于代码中但从未被状态机使用（dead code）。
+3. 上涨阶段内部只处理量价背离，未处理"价跌量缩"（价格和成交量同步萎缩）的情况。
+4. 仓位管理只有全进全出（0.33 → 0.67 → 1.0），缺少分批止盈机制，无法在趋势运行中逐步锁定利润。
 
 ## Solution
 
-实现 "上涨结构" 策略作为一个独立栏目（`up-trend-structure`），包含三层架构：
+**核心思路：上涨阶段由量价关系定义，而非单一K线形态。**
 
-1. **结构识别器**：实时识别每根 K 线所处的上涨结构状态（上涨阶段/回调阶段/结构破坏）
-2. **信号引擎**：基于结构状态 + 止跌K/证伪K 检测，生成仓位信号（1/3 分步建仓）
-3. **回测配置**：通过标准 config.json + SignalEngine 协议接入 backtest runner
-
-数据源使用现有 loader registry（tushare/akshare/eastmoney）实时获取 A 股日线数据。
+1. 上涨阶段 = 连续2天以上价涨量增（`close↑ + volume↑`）
+2. 止跌K/证伪K 降级为上涨结构内部信号——在回调末尾触发新一轮结构
+3. 上涨阶段结束条件扩展为两种：背离未修复 OR 价跌量缩未修复
+4. 修复（补量）条件统一：`close > 触发日close AND volume > 触发日volume`
+5. 仓位信号简化：移除 1.0 全仓，最大仓位 0.67
+6. 新增三档分批止盈：盈利30% → 5日均线 → 10日均线
 
 ## User Stories
 
-1. As a trader, I want the system to automatically identify when a stock is in an "up trend structure" (上涨结构), so that I can focus on stocks with favorable trend conditions.
-2. As a trader, I want the system to detect "bottom signal K-lines" (止跌K) during pullback phases, so that I can identify potential entry points.
-3. As a trader, I want the system to detect "confirmation K-lines" (证伪K) that validate the bottom signal, so that I can confirm the pullback is ending.
-4. As a trader, I want the system to detect volume-price divergence (量价背离) within the up phase, so that I can be alerted to weakening trend quality.
-5. As a trader, I want the system to generate position-sizing signals (1/3 → 2/3 → full position), so that I can scale into positions with controlled risk.
-6. As a trader, I want automatic stop-loss signals when price breaks below the bottom signal K-line low or loss exceeds 3%, so that I can protect capital.
-7. As a trader, I want automatic take-profit signals when volume-price divergence appears and is not repaired the next day, so that I can exit before the pullback phase begins.
-8. As a trader, I want the strategy to be backtestable on A-share stocks using existing data loaders, so that I can evaluate its historical performance.
-9. As a developer, I want the strategy implemented as an independent skill directory, so that it does not interfere with existing strategies.
-10. As a developer, I want re-usable candlestick detection utilities (from the existing candlestick skill) to be leveraged, so that code duplication is minimized.
+1. As a trader, I want the up-phase to be defined by 2+ consecutive days of 价涨量增 (close↑ + volume↑), so that I only enter trends backed by sustained volume-price coordination
+2. As a trader, I want a single day of 价涨量增 to put the structure into "forming" state, so that I can observe whether a trend is forming before committing
+3. As a trader, I want the structure to return to no_structure if the second day fails to confirm 价涨量增, so that false signals are quickly discarded
+4. As a trader, I want 止跌K to restart the forming process from a pullback, so that I can capture the start of a new up-trend structure
+5. As a trader, I want 证伪K to confirm entry from forming into up_phase during a pullback restart, so that I have a reliable entry trigger
+6. As a trader, I want the structure to fall back to pullback if 止跌K appears but no 证伪K follows, so that unconfirmed signals don't trap me
+7. As a trader, I want volume-price divergence in up_phase to NOT immediately end the phase—instead, the next day should attempt repair（补量）, so that brief anomalies don't prematurely end trends
+8. As a trader, I want divergence repair to require close > divergence-day close AND volume > divergence-day volume, so that repair is a meaningful confirmation of trend health
+9. As a trader, I want unrepaired divergence to end the up phase and enter pullback, so that deteriorating trends are exited
+10. As a trader, I want 价跌量缩 (both price and volume falling) to also attempt next-day repair, with unrepaired cases ending the up phase, so that weakening trends are caught
+11. As a trader, I want the 起涨点 (pivot low) to always be the lowest price of the forming bar, consistently applied across both entry paths, so that stop-loss placement is predictable
+12. As a trader, I want price breaking below the pivot low to mark the structure as "breakdown", destroying it, so that I can cut losses decisively
+13. As a trader, I want my maximum position to be 0.67 (证伪K confirmed) and never 1.0, so that I always maintain capital reserve
+14. As a trader, I want to take profit 1/2 of my position when unrealized profit reaches 30%, so that I can lock in gains early
+15. As a trader, I want to take profit another 1/2 of my remaining position when price breaks below the 5-day moving average, so that I exit on short-term weakness
+16. As a trader, I want to fully exit when price breaks below the 10-day moving average (5日线止盈已触发过半仓), so that I'm fully out when the intermediate trend turns
+17. As a trader, I want automatic stop-loss when price breaks below pivot_low or unrealized loss exceeds stop_loss_pct, so that downside is capped
 
 ## Implementation Decisions
 
-### Architecture: Three-layer with independent skill directory
+### 概念定义
 
-All code lives in a new `up-trend-structure` skill directory, following the pattern of existing skills (e.g., `candlestick/`). No existing files are modified.
+| 概念 | 定义 |
+|------|------|
+| 价涨量增 | `close > prev_close` AND `volume > prev_volume` |
+| 量价背离 | `(close > prev_close AND volume < prev_volume)` OR `(volume > prev_volume AND close < prev_close)` |
+| 价跌量缩 | `close < prev_close` AND `volume < prev_volume` |
+| 补量（修复） | `close > 触发日close` AND `volume > 触发日volume` |
+| 起涨点 | forming 状态对应K线的最低价（第一根价涨量增K线的最低价） |
+| 上涨结构 | forming → up_phase → pullback 的完整生命周期 |
 
-**Layer 1** — Structure Detector: State machine that processes OHLCV bars sequentially and outputs the current structure state for each bar.
+### 状态机
 
-**Layer 2** — Signal Engine: Implements the `SignalEngine` contract (`generate(data_map) -> dict[code, Series]`). Consumes Layer 1 output. Manages position scaling and stop-loss/take-profit logic.
+```
+no_structure ──价涨量增──▶ forming ──第2天价涨量增──▶ up_phase
+     ▲            │                    │
+     │            │ 第2天未价涨量增      │ 背离/价跌量缩 未补量修复
+     │            ▼                    ▼
+     │       no_structure          pullback
+     │                                 │
+     │              止跌K（也是价涨量增）  │
+     │                                 ▼
+     │              ┌───────────── forming ──证伪K──▶ up_phase (新结构)
+     │              │                  │
+     │              │    无证伪K → 回到pullback
+     │              │
+     ├──────────────┴───────────────────── low < 起涨点 (breakdown)
+     └────────────────────────────────────┘
+```
 
-**Layer 3** — Backtest Config: Standard `config.json` using `source: "auto"` for A-share data routing.
+完整转移表：
 
-### Up Trend Structure Rules
+| 当前状态 | 条件 | 新状态 | 动作 |
+|----------|------|--------|------|
+| `no_structure` | 价涨量增 | `forming` | 起涨点 = 当前low |
+| `forming` | 第2天价涨量增（从 no_structure 来） | `up_phase` | — |
+| `forming` | 第2天未价涨量增（从 no_structure 来） | `no_structure` | — |
+| `forming` | 证伪K（从 pullback 来，由止跌K触发） | `up_phase` | — |
+| `forming` | 止跌K后无证伪K（从 pullback 来） | `pullback` | — |
+| `up_phase` | 价涨量增持续 | `up_phase` | — |
+| `up_phase` | 背离 + 第二天补量成功 | `up_phase` | 延续 |
+| `up_phase` | 背离 + 第二天补量失败 | `pullback` | 上涨阶段结束 |
+| `up_phase` | 价跌量缩 + 第二天补量成功 | `up_phase` | 延续 |
+| `up_phase` | 价跌量缩 + 第二天补量失败 | `pullback` | 上涨阶段结束 |
+| `pullback` | 止跌K | `forming` | 新起涨点 = 止跌K low |
+| 任何(除no_structure) | `low < 起涨点` | `breakdown` | — |
+| `breakdown` | (立即) | `no_structure` | — |
 
-**Up phase:**
-- Requires ≥ 3 consecutive trading days of predominantly bullish candles with volume-price coordination
+### 仓位信号规则
 
-**Volume-price divergence:**
-- Price rises but volume shrinks vs previous day, OR volume rises but price falls
-- Requires next-day repair (bullish candle with higher volume than divergence day)
-- Unrepaired divergence → up phase ends → pullback begins
+| 触发条件 | 信号值 | 说明 |
+|----------|--------|------|
+| 止跌K（在 forming 中） | 0.33 | 试探性建仓 1/3 |
+| 证伪K（确认 forming → up_phase） | 0.67 | 加仓至 2/3（最大仓位） |
+| 盈利 ≥ 30% | ×0.5 | 止盈一半 |
+| 跌破 5日均线 | ×0.5 | 止盈剩余一半 |
+| 跌破 10日均线 | 0 | 清仓（5日线止盈已触发过） |
+| low < 起涨点 | 0 | 止损，结构破坏 |
+| 未实现亏损 > stop_loss_pct | 0 | 无条件止损 |
+| 背离未修复 → pullback | 0 | 止盈退出 |
+| 价跌量缩未修复 → pullback | 0 | 止盈退出 |
 
-**Pullback phase:**
-- Consolidation or decline with shrinking volume
-- Must not break below pivot low (止跌K lowest price)
+### 模块变更
 
-**Bottom Signal K-line (止跌K):**
-- Pattern: inverted hammer (upper shadow ≥ 1.5× body, lower shadow < body) OR big bullish candle (bullish, body > 60% of range)
-- Close > 50% of previous bearish candle's body
-- Volume > 1.5× previous day's volume
+- **UpTrendStructure 检测器**: 新增 `_detect_price_up_volume_up()` 和 `_detect_price_volume_down()`；完全重写 `_compute_states()`；`up_phase_min_bars` 默认值改为 2 并实际生效
+- **SignalEngine**: 移除 1.0 全仓逻辑；新增三档止盈（需计算 MA 和累计盈亏）；`stop_loss_pct` 保持
+- **策略配置（strategy_config_store）**: `up_phase_min_bars` 默认 3→2；新增 `take_profit_pct`、`ma_short`、`ma_mid`
+- **SKILL.md**: 更新状态机文档
 
-**Confirmation K-line (证伪K):**
-- Next day after 止跌K
-- Any bullish candle OR close > 止跌K close
-- Volume not required
+### 参数变更
 
-**Pivot low (起涨点):**
-- Set to the low of the most recent 止跌K
-- If 证伪K confirms, the 止跌K becomes the first bar of the new up phase
-- Breaking below pivot low = structure breakdown
-
-### Entry Rules (position scaling)
-
-| Trigger | Action | Signal Value |
-|---------|--------|-------------|
-| 止跌K appears | Enter 1/3 position (trial) | 0.33 |
-| 证伪K confirms | Add 1/3 position | 0.67 |
-| Pullback holds above 止跌K low + bullish volume candle | Add final 1/3 | 1.0 |
-
-### Exit Rules
-
-| Trigger | Action | Signal Value |
-|---------|--------|-------------|
-| Price breaks below 止跌K low | Stop loss — full exit | -1.0 |
-| Unrealized loss > 3% | Stop loss — full exit | -1.0 |
-| Volume-price divergence + next-day unrepaired | Take profit — full exit | -1.0 |
-
-### Reuse of existing code
-
-The candlestick skill's example signal engine provides helper functions (`_body`, `_range`, `_upper_shadow`, `_lower_shadow`) and the `_detect_inverted_hammer` detector that are directly reusable. These functions are copied into the new module (not imported) to keep the module self-contained.
-
-### Data source
-
-Use existing loader registry via `source: "auto"` in config.json. A-share daily OHLCV data routed through tushare/akshare/eastmoney loaders automatically.
-
-### Tunable parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `up_phase_min_bars` | 3 | Minimum bars for up phase |
-| `volume_surge_ratio` | 1.5 | 止跌K volume threshold vs prior day |
-| `big_bull_body_ratio` | 0.6 | Big bullish candle body/range ratio |
-| `inv_hammer_shadow_ratio` | 1.5 | Inverted hammer upper shadow/body ratio |
-| `close_above_prev_mid` | 0.5 | Close must be above this fraction of prior bearish body |
-| `stop_loss_pct` | 0.03 | Unconditional stop loss threshold |
-| `divergence_repair_bars` | 1 | Days allowed for divergence repair |
+| 参数 | 旧默认值 | 新默认值 | 说明 |
+|------|---------|---------|------|
+| `up_phase_min_bars` | 3 (dead) | 2 | 价涨量增连续天数要求，现在生效 |
+| `stop_loss_pct` | 0.03 | 0.03 | 不变 |
+| `take_profit_pct` | — | 0.30 | 新增：第一档止盈盈利比例 |
+| `ma_short` | — | 5 | 新增：短期均线周期 |
+| `ma_mid` | — | 10 | 新增：中期均线周期 |
+| `volume_surge_ratio` | 1.5 | 1.5 | 不变 |
+| `big_bull_body_ratio` | 0.6 | 0.6 | 不变 |
+| `inv_hammer_shadow_ratio` | 1.5 | 1.5 | 不变 |
+| `close_above_prev_mid` | 0.5 | 0.5 | 不变 |
+| `divergence_repair_bars` | 1 | 1 | 不变（修复窗口固定1天） |
 
 ## Testing Decisions
 
-### Testing seams
+### 测试策略
 
-All tests use existing seams — no new frameworks or mock layers needed.
+测试 external behavior（给定K线序列 → 输出状态/信号），不测试 implementation details（内部循环变量）。
 
-| Level | Seam | What it tests |
-|-------|------|---------------|
-| Unit | Synthetic OHLCV DataFrames → detector functions | 止跌K, 证伪K, divergence, big bullish candle detection correctness |
-| State machine | Hand-crafted K-line sequences covering full structure lifecycle | State transitions: no_structure → forming → up_phase → pullback → breakdown |
-| Signal engine | `SignalEngine.generate()` with synthetic data_map | Position scaling logic (0 → 0.33 → 0.67 → 1.0), stop-loss/take-profit signals |
-| Integration | Backtest runner with real historical data (A-share, e.g. 000001.SZ) | End-to-end verification: config.json → runner → artifacts (metrics.csv, equity.csv) |
+### 测试层级
 
-### Good test characteristics
-- Test external behavior (signal values, state labels), not internal implementation
-- Independent tests per detector function
-- State machine tests verify transitions at exact boundary bars
-- Integration test verifies: metrics.csv exists, equity.csv has no NaN, trade_count > 0, exit_code == 0
+| Level | Seam | 覆盖 |
+|-------|------|------|
+| Unit — 状态机 | 合成 OHLCV DataFrame → `UpTrendStructure.compute()` | 所有状态转移场景 |
+| Unit — 信号引擎 | OHLCV + 状态序列 → `SignalEngine.generate()` | 仓位信号 + 分批止盈 |
+| Compile | `py_compile` | 语法检查 |
 
-### Prior art
-- `agent/tests/` — existing test patterns for backtest runner
-- `agent/src/skills/candlestick/example_signal_engine.py` — same `SignalEngine` contract, same testing approach
+### 状态机测试场景
+
+- 连续2天价涨量增 → up_phase
+- 1天价涨量增后失败 → forming → no_structure
+- 背离 + 补量成功 → up_phase 延续
+- 背离 + 补量失败 → pullback
+- 价跌量缩 + 补量成功 → up_phase 延续
+- 价跌量缩 + 补量失败 → pullback
+- pullback → 止跌K → forming → 证伪K → up_phase
+- 止跌K 后无证伪K → forming → pullback
+- 跌破起涨点 → breakdown → no_structure
+
+### 信号引擎测试场景
+
+- 止跌K → signal 0.33
+- 证伪K → signal 0.67
+- 最大仓位不超过 0.67
+- 盈利30%触发止盈（仓位减半）
+- 跌破5日线触发止盈（仓位再减半）
+- 跌破10日线清仓
+- 止损优先级高于止盈
+
+### Prior Art
+
+- `agent/tests/test_up_trend_structure.py` — 现有状态机测试
+- `agent/tests/test_structure_signal_engine.py` — 现有信号引擎测试
 
 ## Out of Scope
 
-- Real-time/live trading execution
-- Multi-timeframe analysis (daily only for initial implementation)
-- 堆量 (volume accumulation) detection — deferred
-- 涨停后 7-14 天窗口检测 — deferred
-- 周线均线多头判断 — deferred
-- Multi-stock portfolio optimization (single-stock strategy initially)
-- Short-side trading (long-only for initial implementation)
-- Database/本地数据存储 — data sourced via existing remote API loaders only
+- 多股票组合层面仓位管理
+- 其他策略文件的适配
+- 前端 UI 变更（参数面板自动适配新参数）
+- `watch_pool_runner.py` 的适配（后续单独处理）
+- `screen_bottom_k.py` CLI 工具的适配
 
 ## Further Notes
 
-- The strategy is derived from 飞书知识库 "大a知识库/大a梦想" course materials (公开课 + 会员课件)
-- Core philosophy: never participate in pullback phases — exit when divergence appears unrepaired, re-enter only after 止跌K + 证伪K confirm new up phase
-- The up trend structure state machine is the foundation layer; future strategies can consume its output
+- 止跌K 天然满足"价涨量增"条件（volume surge + close above midpoint），因此无论从 no_structure 还是 pullback 进入 forming，起涨点 = forming bar 最低价——逻辑一致
+- 三档止盈是级联关系：先触发盈利30%（减半仓），再跌破5日线（再减半），最后跌破10日线（清仓）。每档操作的是当前剩余仓位
+- 修复窗口固定为1天。连续多天背离/价跌量缩时，每对（触发日+次日）独立判断
+- 策略源自飞书知识库 "大a知识库/大a梦想" 课程材料（公开课 + 会员课件）

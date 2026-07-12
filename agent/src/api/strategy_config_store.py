@@ -19,13 +19,16 @@ _DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "strategy_co
 
 _DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     "up_trend_structure": {
-        "up_phase_min_bars": 3,
-        "volume_surge_ratio": 1.5,
+        "up_phase_min_bars": 2,
+        "volume_surge_ratio": 1.2,
         "big_bull_body_ratio": 0.6,
-        "inv_hammer_shadow_ratio": 1.5,
+        "inv_hammer_shadow_ratio": 1.2,
         "close_above_prev_mid": 0.5,
         "stop_loss_pct": 0.03,
         "divergence_repair_bars": 1,
+        "take_profit_pct": 0.30,
+        "ma_short": 5,
+        "ma_mid": 10,
     },
 }
 

@@ -2,6 +2,9 @@
 
 State machine that processes OHLCV bars and outputs the current structure state
 for each bar: no_structure → forming → up_phase → pullback → breakdown.
+
+v2: Up-phase defined by 2+ consecutive days of 价涨量增 (price↑ + volume↑).
+    止跌K/证伪K restart structures from pullback.
 """
 
 from __future__ import annotations
@@ -37,14 +40,19 @@ def _lower_shadow(o: pd.Series, c: pd.Series, l: pd.Series) -> pd.Series:
 
 
 class UpTrendStructure:
-    """Detect up-trend structure states from daily OHLCV data."""
+    """Detect up-trend structure states from daily OHLCV data.
+
+    v2: Entering up_phase requires 2+ consecutive days of 价涨量增
+    (close > prev_close AND volume > prev_volume). 止跌K/证伪K now
+    restart structures from pullback rather than defining initial entry.
+    """
 
     def __init__(
         self,
-        up_phase_min_bars: int = 3,
-        volume_surge_ratio: float = 1.5,
+        up_phase_min_bars: int = 2,
+        volume_surge_ratio: float = 1.2,
         big_bull_body_ratio: float = 0.6,
-        inv_hammer_shadow_ratio: float = 1.5,
+        inv_hammer_shadow_ratio: float = 1.2,
         close_above_prev_mid: float = 0.5,
         divergence_repair_bars: int = 1,
     ):
@@ -58,6 +66,22 @@ class UpTrendStructure:
     # -------------------------------------------------------------------
     # Detectors
     # -------------------------------------------------------------------
+
+    def _detect_price_up_volume_up(self, df: pd.DataFrame) -> pd.Series:
+        """Detect 价涨量增: close > prev_close AND volume > prev_volume."""
+        c, v = df["close"], df["volume"]
+        price_up = c > c.shift(1)
+        volume_up = v > v.shift(1)
+        result = price_up & volume_up
+        return result.fillna(False)
+
+    def _detect_price_volume_down(self, df: pd.DataFrame) -> pd.Series:
+        """Detect 价跌量缩: close < prev_close AND volume < prev_volume."""
+        c, v = df["close"], df["volume"]
+        price_down = c < c.shift(1)
+        volume_down = v < v.shift(1)
+        result = price_down & volume_down
+        return result.fillna(False)
 
     def _detect_bottom_signal_k(self, df: pd.DataFrame) -> pd.Series:
         """Detect 止跌K (bottom signal K-line).
@@ -127,20 +151,36 @@ class UpTrendStructure:
         return divergence.fillna(False)
 
     # -------------------------------------------------------------------
-    # State machine
+    # State machine (v2)
     # -------------------------------------------------------------------
 
     def _compute_states(
         self,
         df: pd.DataFrame,
+        puvu: pd.Series,
+        pvd: pd.Series,
         bsk: pd.Series,
         ck: pd.Series,
         div: pd.Series,
     ) -> Tuple[pd.Series, pd.Series]:
         """Compute state and pivot_low for each bar.
 
-        Sequential state machine because each bar's state depends on the
-        previous bar's state and pivot_low.
+        v2 state transitions:
+
+        no_structure + 价涨量增 → forming (pivot = current low)
+          forming (from no_structure) + 价涨量增 → up_phase
+          forming (from no_structure) + !价涨量增 → no_structure
+
+        up_phase + 价涨量增 → up_phase (continue)
+        up_phase + divergence/价跌量缩 → pending repair
+          repair next day → up_phase (continue)
+          no repair next day → pullback
+
+        pullback + 止跌K → forming (new pivot)
+          forming (from pullback) + 证伪K → up_phase
+          forming (from pullback) + !证伪K → pullback
+
+        any(!no_structure) + low < pivot → breakdown → no_structure
         """
         n = len(df)
         states = ["no_structure"] * n
@@ -148,54 +188,88 @@ class UpTrendStructure:
 
         current_state = "no_structure"
         current_pivot = float("nan")
-        prev_divergence = False  # True if previous bar had divergence awaiting repair
+        forming_source = None
+
+        # Pending exit condition awaiting next-day repair (补量)
+        pending_exit = None  # "divergence" or "price_volume_down"
+        pending_close = float("nan")
+        pending_volume = float("nan")
 
         for i in range(n):
             low_i = df["low"].iloc[i]
-            o_i = df["open"].iloc[i]
-            c_i = df["close"].iloc[i]
-            v_i = df["volume"].iloc[i]
+            close_i = df["close"].iloc[i]
+            volume_i = df["volume"].iloc[i]
+            is_puvu = bool(puvu.iloc[i])
+            is_pvd = bool(pvd.iloc[i])
             is_bsk = bool(bsk.iloc[i])
             is_ck = bool(ck.iloc[i])
             is_div = bool(div.iloc[i])
 
-            # Check breakdown first (applies to all states except no_structure/breakdown)
-            if current_state in ("forming", "up_phase", "pullback"):
+            # --- Breakdown check (all states except no_structure) ---
+            if current_state != "no_structure":
                 if low_i < current_pivot:
                     current_state = "breakdown"
                     current_pivot = float("nan")
-                    prev_divergence = False
+                    pending_exit = None
+                    forming_source = None
 
-            if current_state == "no_structure":
-                if is_bsk:
+            # --- breakdown → no_structure (immediate) ---
+            if current_state == "breakdown":
+                current_state = "no_structure"
+
+            # --- no_structure ---
+            elif current_state == "no_structure":
+                if is_puvu:
                     current_state = "forming"
                     current_pivot = low_i
+                    forming_source = "no_structure"
 
+            # --- forming ---
             elif current_state == "forming":
-                if is_ck:
-                    current_state = "up_phase"
-
-            elif current_state == "up_phase":
-                # Check divergence repair from previous bar
-                if prev_divergence:
-                    prev_v = df["volume"].iloc[i - 1]
-                    repaired = (c_i > o_i) and (v_i > prev_v)
-                    if not repaired:
+                if forming_source == "no_structure":
+                    if is_puvu:
+                        current_state = "up_phase"
+                        forming_source = None
+                    else:
+                        current_state = "no_structure"
+                        current_pivot = float("nan")
+                        forming_source = None
+                elif forming_source == "pullback":
+                    if is_ck:
+                        current_state = "up_phase"
+                        forming_source = None
+                    else:
                         current_state = "pullback"
-                    prev_divergence = False
-                # Track new divergence
-                elif is_div:
-                    prev_divergence = True
+                        forming_source = None
 
+            # --- up_phase ---
+            elif current_state == "up_phase":
+                if pending_exit is not None:
+                    repaired = (close_i > pending_close and volume_i > pending_volume)
+                    if repaired:
+                        pending_exit = None
+                        pending_close = float("nan")
+                        pending_volume = float("nan")
+                    else:
+                        current_state = "pullback"
+                        pending_exit = None
+                        pending_close = float("nan")
+                        pending_volume = float("nan")
+                elif is_div:
+                    pending_exit = "divergence"
+                    pending_close = close_i
+                    pending_volume = volume_i
+                elif is_pvd:
+                    pending_exit = "price_volume_down"
+                    pending_close = close_i
+                    pending_volume = volume_i
+
+            # --- pullback ---
             elif current_state == "pullback":
                 if is_bsk:
                     current_state = "forming"
                     current_pivot = low_i
-
-            elif current_state == "breakdown":
-                if is_bsk:
-                    current_state = "forming"
-                    current_pivot = low_i
+                    forming_source = "pullback"
 
             states[i] = current_state
             pivots[i] = current_pivot
@@ -213,17 +287,25 @@ class UpTrendStructure:
             df: OHLCV DataFrame (open, high, low, close, volume, DatetimeIndex).
 
         Returns:
-            DataFrame with added columns: state, bottom_signal_k, confirm_k,
-            divergence, pivot_low, pullback_depth_pct.
+            DataFrame with columns: state, bottom_signal_k, confirm_k,
+            divergence, price_up_volume_up, price_volume_down,
+            pivot_low, pullback_depth_pct.
         """
         result = pd.DataFrame(index=df.index)
+        result["price_up_volume_up"] = self._detect_price_up_volume_up(df)
+        result["price_volume_down"] = self._detect_price_volume_down(df)
         result["bottom_signal_k"] = self._detect_bottom_signal_k(df)
         result["confirm_k"] = self._detect_confirm_k(df)
         result["divergence"] = self._detect_divergence(df)
         result["pullback_depth_pct"] = float("nan")
 
         states, pivots = self._compute_states(
-            df, result["bottom_signal_k"], result["confirm_k"], result["divergence"]
+            df,
+            result["price_up_volume_up"],
+            result["price_volume_down"],
+            result["bottom_signal_k"],
+            result["confirm_k"],
+            result["divergence"],
         )
         result["state"] = states
         result["pivot_low"] = pivots

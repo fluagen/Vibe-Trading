@@ -37,18 +37,20 @@ STRATEGY_MAP: dict[str, dict[str, str]] = {
 }
 
 
-# Parameter keys used by the detector (UpTrendStructure.__init__).
-_DETECTOR_PARAM_KEYS = {
+# Parameter keys shared by both detector and signal engine.
+_COMMON_PARAM_KEYS = {
     "up_phase_min_bars",
     "volume_surge_ratio",
     "big_bull_body_ratio",
     "inv_hammer_shadow_ratio",
     "close_above_prev_mid",
-    "divergence_repair_bars",
 }
 
+# Parameter keys used by the detector (UpTrendStructure.__init__).
+_DETECTOR_PARAM_KEYS = _COMMON_PARAM_KEYS | {"divergence_repair_bars"}
+
 # Parameter keys used by the signal engine (SignalEngine.__init__).
-_SIGNAL_PARAM_KEYS = _DETECTOR_PARAM_KEYS | {"stop_loss_pct"}
+_SIGNAL_PARAM_KEYS = _COMMON_PARAM_KEYS | {"stop_loss_pct", "take_profit_pct", "ma_short", "ma_mid"}
 
 
 def _load_strategy(strategy_name: str):
@@ -177,6 +179,17 @@ def run_single_stock_backtest(
         not states.empty and "confirm_k" in states.columns
     ) else 0
 
+    # 9. Build grouped trade records with reason descriptions.
+    stop_loss_pct = getattr(signal_engine, "stop_loss_pct", 0.03)
+    ma_short = getattr(signal_engine, "ma_short", 5)
+    ma_mid = getattr(signal_engine, "ma_mid", 10)
+    trades = _build_trade_records(df, states, sig_series, stop_loss_pct, ma_short, ma_mid)
+
+    # 10. Trading days and date range.
+    trading_days = len(df)
+    date_start = str(df.index[0])[:10] if len(df) > 0 else ""
+    date_end = str(df.index[-1])[:10] if len(df) > 0 else ""
+
     return {
         "code": code,
         "name": code,
@@ -193,6 +206,10 @@ def run_single_stock_backtest(
         "ck_count": ck_count,
         "latest_signal": signal_points[-1] if signal_points else None,
         "signal_points": signal_points,
+        "trades": trades,
+        "trading_days": trading_days,
+        "date_start": date_start,
+        "date_end": date_end,
         "equity_curve": metrics["equity_curve"],
         "states_summary": states_summary,
         "ohlcv_snapshot": ohlcv_snapshot,
@@ -286,6 +303,10 @@ def _empty_result(code: str) -> dict[str, Any]:
         "ck_count": 0,
         "latest_signal": None,
         "signal_points": [],
+        "trades": [],
+        "trading_days": 0,
+        "date_start": "",
+        "date_end": "",
         "equity_curve": [],
         "states_summary": {},
         "ohlcv_snapshot": [],
@@ -428,6 +449,157 @@ def _build_signal_points(
             })
         prev = sig
     return points
+
+
+def _build_trade_records(
+    df: pd.DataFrame,
+    states: pd.DataFrame,
+    signals: pd.Series,
+    stop_loss_pct: float,
+    ma_short: int,
+    ma_mid: int,
+) -> list[dict[str, Any]]:
+    """Group signal points into trades with human-readable result descriptions.
+
+    Each trade contains a list of signals (entry_trial → entry_confirm →
+    exit) and a per-trade return percentage.  Exit reasons are inferred
+    from the OHLCV bar conditions at the exit date in the same priority
+    order used by ``SignalEngine``.
+    """
+    if df is None or df.empty or signals.empty:
+        return []
+
+    close = df["close"]
+    low = df["low"]
+
+    # Compute MAs (same as signal engine).
+    ma_s = close.rolling(window=ma_short).mean()
+    ma_m = close.rolling(window=ma_mid).mean()
+
+    # Extract signal change points preserving order and value.
+    events: list[dict[str, Any]] = []
+    prev = 0.0
+    for idx in signals.index:
+        sig = float(signals.loc[idx])
+        if sig != prev:
+            entry_types = {0.33: "entry_trial", 0.67: "entry_confirm", 1.0: "entry_full"}
+            exit_types = {-1.0: "exit"}
+            if sig > 0:
+                stype = entry_types.get(round(sig, 2), "entry")
+            elif sig < 0:
+                stype = exit_types.get(round(sig, 2), "exit")
+            else:
+                stype = "flat"
+            try:
+                price = float(close.loc[idx])
+            except (KeyError, TypeError):
+                price = 0.0
+            events.append({
+                "date": str(idx)[:10],
+                "type": stype,
+                "price": round(price, 2),
+                "signal_value": round(sig, 2),
+            })
+        prev = sig
+
+    # Group events into trades: entry events → exit event.
+    trades: list[dict[str, Any]] = []
+    current_signals: list[dict[str, Any]] = []
+    entry_prices: list[float] = []
+
+    ENTRY_LABELS: dict[str, str] = {
+        "entry_trial": "止跌K入场",
+        "entry_confirm": "证伪K加仓",
+        "entry_full": "加仓至满仓",
+    }
+
+    for ev in events:
+        if ev["type"].startswith("entry"):
+            label = ENTRY_LABELS.get(ev["type"], ev["type"])
+            current_signals.append({**ev, "description": label})
+            entry_prices.append(ev["price"])
+        elif ev["type"] == "exit" and current_signals:
+            # Determine exit reason.
+            exit_date = ev["date"]
+            exit_price = ev["price"]
+            avg_entry = sum(entry_prices) / len(entry_prices) if entry_prices else exit_price
+            return_pct = (exit_price - avg_entry) / avg_entry if avg_entry else 0.0
+
+            reason = _infer_exit_reason(
+                df, states, exit_date, exit_price, avg_entry,
+                stop_loss_pct, ma_s, ma_m, low,
+            )
+            desc = f"{reason}，{return_pct * 100:.1f}%"
+            current_signals.append({**ev, "description": desc})
+            trades.append({
+                "trade_index": len(trades) + 1,
+                "signals": current_signals,
+                "return_pct": round(return_pct, 4),
+                "is_win": return_pct > 0,
+            })
+            current_signals = []
+            entry_prices = []
+
+    return trades
+
+
+def _infer_exit_reason(
+    df: pd.DataFrame,
+    states: pd.DataFrame,
+    exit_date: str,
+    exit_price: float,
+    avg_entry: float,
+    stop_loss_pct: float,
+    ma_s: pd.Series,
+    ma_m: pd.Series,
+    low: pd.Series,
+) -> str:
+    """Infer the most likely exit reason by checking conditions at *exit_date*.
+
+    Priority mirrors ``SignalEngine``: pivot break → stop-loss % →
+    pullback/divergence → MA break.
+    """
+    try:
+        idx = df.index[df.index.astype(str).str.startswith(exit_date)][0]
+    except IndexError:
+        return "离场"
+
+    try:
+        bar_low = float(low.loc[idx])
+        bar_close = float(df["close"].loc[idx])
+        pivot_val: float | None = None
+        if not states.empty and "pivot_low" in states.columns:
+            pv = states["pivot_low"].loc[idx]
+            pivot_val = float(pv) if not pd.isna(pv) else None
+        state_val = ""
+        if not states.empty and "state" in states.columns:
+            state_val = str(states["state"].loc[idx])
+        ma_s_val = float(ma_s.loc[idx]) if not pd.isna(ma_s.loc[idx]) else None
+        ma_m_val = float(ma_m.loc[idx]) if not pd.isna(ma_m.loc[idx]) else None
+    except (KeyError, TypeError, ValueError):
+        return "离场"
+
+    loss_pct = (bar_close - avg_entry) / avg_entry if avg_entry else 0.0
+
+    # 1. Pivot stop-loss.
+    if pivot_val is not None and bar_low < pivot_val:
+        return "跌破 pivot 止损"
+
+    # 2. Percentage stop-loss.
+    if loss_pct < -stop_loss_pct:
+        return f"{stop_loss_pct * 100:.0f}%止损"
+
+    # 3. Divergence / pullback.
+    if state_val == "pullback":
+        return "回调离场"
+
+    # 4. MA-based exit.
+    if ma_m_val is not None and bar_close < ma_m_val:
+        return "跌破均线止盈"
+    if ma_s_val is not None and bar_close < ma_s_val:
+        return "跌破短期均线止盈"
+
+    return "离场"
 
 
 def _build_ohlcv_snapshot(

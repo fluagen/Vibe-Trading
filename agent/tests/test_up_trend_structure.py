@@ -255,10 +255,11 @@ class TestDivergence:
 # ---------------------------------------------------------------------------
 
 class TestStateMachine:
-    """State transitions: no_structure → forming → up_phase → pullback → breakdown."""
+    """v2: 止跌K (价涨量增) still triggers forming, but up_phase needs 2+ days 价涨量增.
+    Breakdown is transient → immediately resolves to no_structure."""
 
     def test_no_structure_to_forming_on_bottom_signal_k(self):
-        """When 止跌K appears in no_structure, state should become 'forming'."""
+        """止跌K IS 价涨量增, so it triggers no_structure → forming."""
         df = _make_ohlcv(
             opens=[100.0, 97.0],
             highs=[102.0, 110.0],
@@ -272,28 +273,30 @@ class TestStateMachine:
         assert result.iloc[0]["state"] == "no_structure"
         assert result.iloc[1]["state"] == "forming"
 
-    def test_forming_to_up_phase_on_confirm_k(self):
-        """止跌K then 证伪K → state becomes 'up_phase'."""
+    def test_forming_to_no_structure_when_volume_drops(self):
+        """v2: 止跌K→证伪K from no_structure: 证伪K without volume confirmation (not 价涨量增)
+        → forming goes back to no_structure."""
         df = _make_ohlcv(
             opens=[100.0, 97.0, 100.0],
             highs=[102.0, 110.0, 105.0],
             lows=[90.0, 96.0, 99.0],
             closes=[90.0, 99.0, 103.0],
-            volumes=[10000, 16000, 12000],
+            volumes=[10000, 16000, 12000],  # day 3 vol↓ vs day 2 → not 价涨量增
         )
         detector = UpTrendStructure()
         result = detector.compute(df)
 
         assert result.iloc[1]["state"] == "forming"
-        assert result.iloc[2]["state"] == "up_phase"
+        # 证伪K has close↑ but vol↓ → not 价涨量增 → back to no_structure
+        assert result.iloc[2]["state"] == "no_structure"
 
-    def test_breakdown_when_price_breaks_pivot_low(self):
-        """Price below pivot_low during forming → breakdown."""
-        # 止跌K at idx 1 with low=96 (pivot), then idx 2 breaks below 96
+    def test_breakdown_transient_to_no_structure(self):
+        """v2: breakdown is transient → immediately resolves to no_structure."""
+        # forming at idx 1 (pivot=96), idx 2 low=88 breaks pivot
         df = _make_ohlcv(
             opens=[100.0, 97.0, 90.0],
             highs=[102.0, 110.0, 92.0],
-            lows=[90.0, 96.0, 88.0],  # idx 2 low=88 < pivot=96
+            lows=[90.0, 96.0, 88.0],
             closes=[90.0, 99.0, 89.0],
             volumes=[10000, 16000, 5000],
         )
@@ -301,10 +304,11 @@ class TestStateMachine:
         result = detector.compute(df)
 
         assert result.iloc[1]["state"] == "forming"
-        assert result.iloc[2]["state"] == "breakdown"
+        # breakdown → immediately no_structure
+        assert result.iloc[2]["state"] == "no_structure"
 
     def test_stays_in_no_structure_without_signal(self):
-        """No 止跌K → state remains 'no_structure'."""
+        """No 价涨量增 → state remains 'no_structure'."""
         df = _make_ohlcv(
             opens=[100.0, 100.0],
             highs=[102.0, 102.0],
@@ -324,77 +328,224 @@ class TestStateMachine:
 # ---------------------------------------------------------------------------
 
 class TestDivergenceToPullback:
-    """量价背离且次日不修复 → up_phase ends → pullback begins."""
+    """v2: 量价背离/价跌量缩 + 次日不补量 → up_phase ends → pullback."""
 
     def test_up_phase_to_pullback_on_unrepaired_divergence(self):
-        """Divergence then next day NOT repaired → pullback.
-        Repair = next day bullish with higher volume than divergence day."""
-        # Day 1-3: up phase starts (止跌K+证伪K)
-        # Day 4: divergence (price up, volume down)
-        # Day 5: not repaired (volume down again) → pullback
+        """Divergence then next day NOT repaired → pullback."""
+        # Day 1: 价涨量增 (forming), Day 2: 价涨量增 → up_phase
+        # Day 3: divergence (price up, volume down)
+        # Day 4: NOT repaired (close↓ or vol↓) → pullback
         df = _make_ohlcv(
-            opens=[100.0, 97.0, 100.0, 102.0, 104.0],
-            highs=[102.0, 110.0, 105.0, 104.0, 106.0],
-            lows=[90.0, 96.0, 99.0, 101.0, 102.0],
-            closes=[90.0, 99.0, 103.0, 104.0, 103.0],  # Day 4 close↑, Day 5 close↓
-            volumes=[10000, 16000, 12000, 8000, 7000],  # Day 4 vol↓ vs Day 3
+            opens=[100.0, 101.0, 105.0, 106.0, 104.0],
+            highs=[102.0, 108.0, 107.0, 108.0, 106.0],
+            lows=[98.0, 100.0, 104.0, 105.0, 102.0],
+            closes=[101.0, 106.0, 107.0, 108.0, 103.0],
+            volumes=[10000, 12000, 13000, 9000, 8000],
         )
         detector = UpTrendStructure()
         result = detector.compute(df)
 
-        assert result.iloc[2]["state"] == "up_phase"   # 证伪K → up_phase
-        assert bool(result.iloc[3]["divergence"]) is True    # Day 4: 量价背离
-        assert result.iloc[4]["state"] == "pullback"   # Day 5: unrepaired → pullback
+        # Day 2 (idx 1): forming, Day 3 (idx 2): up_phase (2nd puvu)
+        assert result.iloc[1]["state"] == "forming"
+        assert result.iloc[2]["state"] == "up_phase"
+        # Day 4 (idx 3): divergence (close↑ vol↓)
+        assert bool(result.iloc[3]["divergence"]) is True
+        # Day 5 (idx 4): not repaired (close↓, vol↓) → pullback
+        assert result.iloc[4]["state"] == "pullback"
 
     def test_divergence_repaired_stays_in_up_phase(self):
-        """Divergence then next day repaired → stays in up_phase.
-        Repair = bullish (close > open) with volume > divergence day volume."""
+        """Divergence then next day repaired (补量) → stays in up_phase."""
         df = _make_ohlcv(
-            opens=[100.0, 97.0, 100.0, 102.0, 100.0],
-            highs=[102.0, 110.0, 105.0, 104.0, 106.0],
-            lows=[90.0, 96.0, 99.0, 101.0, 99.0],
-            closes=[90.0, 99.0, 103.0, 104.0, 105.0],  # Day 5: bullish close↑
-            volumes=[10000, 16000, 12000, 8000, 9000],  # Day 5 vol > Day 4 → repaired
+            opens=[100.0, 101.0, 105.0, 106.0, 103.0],
+            highs=[102.0, 108.0, 107.0, 108.0, 109.0],
+            lows=[98.0, 100.0, 104.0, 105.0, 102.0],
+            closes=[101.0, 106.0, 107.0, 108.0, 110.0],
+            volumes=[10000, 12000, 13000, 9000, 10000],
         )
         detector = UpTrendStructure()
         result = detector.compute(df)
 
+        assert result.iloc[1]["state"] == "forming"
+        assert result.iloc[2]["state"] == "up_phase"
+        # Day 4 (idx 3): divergence (close↑ but vol↓ vs day 3)
         assert bool(result.iloc[3]["divergence"]) is True
-        assert result.iloc[4]["state"] == "up_phase"   # repaired → stays up_phase
+        # Day 5 (idx 4): repaired: close=110 > 108(trigger), vol=10000 > 9000(trigger)
+        assert result.iloc[4]["state"] == "up_phase"
 
 
 # ---------------------------------------------------------------------------
-# Behavior #7: Pullback → next up phase (止跌K + 证伪K in pullback)
+# Behavior #7: Pullback → next up phase (止跌K + 证伪K from pullback)
 # ---------------------------------------------------------------------------
 
 class TestPullbackToNextUpPhase:
-    """Pullback ends when new 止跌K + 证伪K appear without breaking pivot."""
+    """v2: 止跌K from pullback → forming, 证伪K → up_phase (new structure)."""
 
     def test_pullback_to_next_up_phase(self):
-        """New 止跌K + 证伪K in pullback → next up_phase, new pivot."""
-        # Build: up_phase → pullback → new 止跌K + 证伪K
-        # Day 1: bearish, Day 2: 止跌K (low=96, pivot), Day 3: 证伪K → up_phase
-        # Day 4: divergence (unrepaired)
-        # Day 5: pullback starts, stays above pivot=96
-        # Day 6: new 止跌K (low=100 > 96, new pivot=100)
-        # Day 7: new 证伪K → next up_phase
+        """止跌K + 证伪K in pullback → next up_phase, new pivot."""
+        # Day 1-3: 价涨量增 → up_phase (pivot=100 from forming bar)
+        # Day 4: divergence, Day 5: unrepaired → pullback
+        # Day 6: 止跌K in pullback (low=101 > pivot=100 → no breakdown)
+        # Day 7: 证伪K → up_phase (new structure, new pivot=101)
         df = _make_ohlcv(
-            opens=[100.0, 97.0, 100.0, 102.0, 104.0, 99.0, 101.0],
-            highs=[102.0, 110.0, 105.0, 104.0, 106.0, 112.0, 108.0],
-            lows=[90.0, 96.0, 99.0, 101.0, 102.0, 98.0, 100.0],
-            closes=[90.0, 99.0, 103.0, 104.0, 103.0, 104.0, 105.0],
-            volumes=[10000, 16000, 12000, 8000, 7000, 16000, 10000],
+            opens=[100.0, 101.0, 105.0, 107.0, 105.0, 99.0, 102.0],
+            highs=[102.0, 108.0, 108.0, 109.0, 106.0, 112.0, 108.0],
+            lows=[98.0, 100.0, 104.0, 106.0, 103.0, 101.0, 102.0],
+            closes=[101.0, 106.0, 107.0, 108.0, 104.0, 107.0, 108.0],
+            volumes=[10000, 12000, 13000, 9000, 8000, 16000, 12000],
         )
         detector = UpTrendStructure()
         result = detector.compute(df)
 
-        # Verify transitions
+        # Day 1-3: forming → up_phase
+        assert result.iloc[1]["state"] == "forming"
         assert result.iloc[2]["state"] == "up_phase"
+        # Day 5 (idx 4): divergence unrepaired → pullback
         assert result.iloc[4]["state"] == "pullback"
-        # Day 5 (idx 5): new 止跌K in pullback → forming
+        # Day 6 (idx 5): 止跌K in pullback → forming (new pivot=101, above old pivot)
         assert result.iloc[5]["state"] == "forming"
         assert bool(result.iloc[5]["bottom_signal_k"]) is True
-        # Day 6 (idx 6): new 证伪K → next up_phase
+        # Day 7 (idx 6): 证伪K → up_phase (new structure)
         assert result.iloc[6]["state"] == "up_phase"
-        # New pivot should be Day 5 low = 98 (not the original 96)
-        assert result.iloc[6]["pivot_low"] == 98.0
+        # New pivot = 止跌K low = 101
+        assert result.iloc[6]["pivot_low"] == 101.0
+
+
+# ---------------------------------------------------------------------------
+# Behavior #8: 价涨量增 detection (v2 new)
+# ---------------------------------------------------------------------------
+
+
+class TestPriceUpVolumeUp:
+    """价涨量增 = close > prev_close AND volume > prev_volume."""
+
+    def test_detects_price_up_volume_up(self):
+        df = _make_ohlcv(
+            opens=[100.0, 101.0], highs=[105.0, 107.0],
+            lows=[95.0, 100.0], closes=[101.0, 105.0],
+            volumes=[10000, 12000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+        assert bool(result.iloc[1]["price_up_volume_up"]) is True
+
+    def test_rejects_when_price_down(self):
+        df = _make_ohlcv(
+            opens=[100.0, 101.0], highs=[105.0, 103.0],
+            lows=[95.0, 98.0], closes=[101.0, 99.0],
+            volumes=[10000, 12000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+        assert bool(result.iloc[1]["price_up_volume_up"]) is False
+
+    def test_rejects_when_volume_down(self):
+        df = _make_ohlcv(
+            opens=[100.0, 101.0], highs=[105.0, 107.0],
+            lows=[95.0, 100.0], closes=[101.0, 105.0],
+            volumes=[10000, 8000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+        assert bool(result.iloc[1]["price_up_volume_up"]) is False
+
+
+# ---------------------------------------------------------------------------
+# Behavior #9: 价跌量缩 detection (v2 new)
+# ---------------------------------------------------------------------------
+
+
+class TestPriceVolumeDown:
+    """价跌量缩 = close < prev_close AND volume < prev_volume."""
+
+    def test_detects_price_down_volume_down(self):
+        df = _make_ohlcv(
+            opens=[100.0, 99.0], highs=[105.0, 101.0],
+            lows=[95.0, 96.0], closes=[101.0, 97.0],
+            volumes=[10000, 7000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+        assert bool(result.iloc[1]["price_volume_down"]) is True
+
+    def test_rejects_when_only_price_down(self):
+        df = _make_ohlcv(
+            opens=[100.0, 99.0], highs=[105.0, 101.0],
+            lows=[95.0, 96.0], closes=[101.0, 97.0],
+            volumes=[10000, 12000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+        assert bool(result.iloc[1]["price_volume_down"]) is False
+
+
+# ---------------------------------------------------------------------------
+# Behavior #10: State machine v2 — entry via 价涨量增
+# ---------------------------------------------------------------------------
+
+
+class TestStateMachineV2Entry:
+    """v2: no_structure → forming → up_phase driven by 价涨量增."""
+
+    def test_no_structure_to_forming_on_puvu(self):
+        df = _make_ohlcv(
+            opens=[100.0, 101.0], highs=[102.0, 107.0],
+            lows=[98.0, 100.0], closes=[101.0, 105.0],
+            volumes=[10000, 12000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+        assert result.iloc[0]["state"] == "no_structure"
+        assert result.iloc[1]["state"] == "forming"
+        assert result.iloc[1]["pivot_low"] == 100.0
+
+    def test_forming_to_up_phase_on_second_puvu(self):
+        df = _make_ohlcv(
+            opens=[100.0, 101.0, 102.0], highs=[102.0, 107.0, 109.0],
+            lows=[98.0, 100.0, 101.0], closes=[101.0, 105.0, 108.0],
+            volumes=[10000, 12000, 13000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+        assert result.iloc[1]["state"] == "forming"
+        assert result.iloc[2]["state"] == "up_phase"
+        assert result.iloc[2]["pivot_low"] == 100.0
+
+    def test_forming_to_no_structure_when_second_fails(self):
+        df = _make_ohlcv(
+            opens=[100.0, 101.0, 102.0], highs=[102.0, 107.0, 104.0],
+            lows=[98.0, 100.0, 100.0], closes=[101.0, 105.0, 101.0],
+            volumes=[10000, 12000, 8000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+        assert result.iloc[1]["state"] == "forming"
+        assert result.iloc[2]["state"] == "no_structure"
+
+    def test_stays_no_structure_without_signal(self):
+        df = _make_ohlcv(
+            opens=[100.0, 100.0], highs=[102.0, 102.0],
+            lows=[98.0, 98.0], closes=[101.0, 101.0],
+            volumes=[10000, 9000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+        assert result.iloc[0]["state"] == "no_structure"
+        assert result.iloc[1]["state"] == "no_structure"
+
+    def test_up_phase_continues_with_puvu(self):
+        df = _make_ohlcv(
+            opens=[100.0, 101.0, 102.0, 103.0],
+            highs=[102.0, 107.0, 109.0, 110.0],
+            lows=[98.0, 100.0, 101.0, 102.0],
+            closes=[101.0, 105.0, 108.0, 109.0],
+            volumes=[10000, 12000, 13000, 14000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+        assert result.iloc[1]["state"] == "forming"
+        assert result.iloc[2]["state"] == "up_phase"
+        assert result.iloc[3]["state"] == "up_phase"
+
+    def test_up_phase_min_bars_default_2(self):
+        detector = UpTrendStructure()
+        assert detector.up_phase_min_bars == 2
