@@ -15,7 +15,7 @@
 | 量价背离 | `(close↑ AND volume↓)` OR `(volume↑ AND close↓)` |
 | 补量（修复） | `close > 触发日close` AND `volume > 触发日volume` |
 | 起涨点 | forming bar 的最低价 |
-| 止跌K | 倒锤线(上影≥1.2×body)/大阳线(body>60%振幅) + vol>前日×1.2 + close>前日中点 |
+| 止跌K | 两种：① D0阴线->倒锤/大阳 + V>D0×1.2 + C>D0中点; ② 两天补量：D0阴→D1阳+vol↑→D2阳+vol↑+C>D0中点，D2为止跌K |
 | 证伪K | 止跌K次日，阳线 OR close>止跌K close |
 | 上涨结构 | forming → up_phase → pullback → pullback_end 的完整生命周期 |
 

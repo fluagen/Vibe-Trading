@@ -78,6 +78,7 @@ export function StrategyResearch() {
   type ResultSortField = "trade_count" | "win_rate" | "cumulative_return" | "final_state";
   const [resultSortField, setResultSortField] = useState<ResultSortField>("cumulative_return");
   const [resultSortOrder, setResultSortOrder] = useState<"asc" | "desc">("desc");
+  const [resultStateFilter, setResultStateFilter] = useState("");
 
   const toggleResultSort = (field: ResultSortField) => {
     if (resultSortField === field) {
@@ -113,9 +114,14 @@ export function StrategyResearch() {
     return list;
   }, [results, resultSortField, resultSortOrder]);
 
-  const totalResultPages = Math.max(1, Math.ceil(sortedResults.length / resultPageSize));
+  const filteredResults = useMemo(() => {
+    if (!resultStateFilter) return sortedResults;
+    return sortedResults.filter((r) => r.final_state === resultStateFilter);
+  }, [sortedResults, resultStateFilter]);
+
+  const totalResultPages = Math.max(1, Math.ceil(filteredResults.length / resultPageSize));
   const safeResultPage = Math.min(resultPage, totalResultPages);
-  const pagedResults = sortedResults.slice((safeResultPage - 1) * resultPageSize, safeResultPage * resultPageSize);
+  const pagedResults = filteredResults.slice((safeResultPage - 1) * resultPageSize, safeResultPage * resultPageSize);
 
   // Code → name lookup from members
   const codeToName = useMemo(() => {
@@ -518,10 +524,28 @@ export function StrategyResearch() {
             className="flex w-full items-center justify-between px-4 py-2.5 bg-muted/30 hover:bg-muted/50 transition-colors select-none">
             <div className="flex items-center gap-3">
               <h2 className="text-xs font-semibold text-foreground tracking-wide uppercase">回测结果</h2>
-              <span className="text-[11px] tabular-nums text-muted-foreground">{results.length} 只</span>
+              <span className="text-[11px] tabular-nums text-muted-foreground">
+                {resultStateFilter ? `${filteredResults.length}/` : ""}{results.length} 只
+              </span>
               <span className="text-[10px] text-muted-foreground">
                 平均胜率 {results.length > 0 ? `${(results.reduce((s, r) => s + r.win_rate, 0) / results.length * 100).toFixed(0)}%` : "—"}
               </span>
+            </div>
+            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              {Object.keys(STATE_LABELS).map((st) => (
+                <button key={st}
+                  onClick={() => {
+                    setResultStateFilter(resultStateFilter === st ? "" : st);
+                    setResultPage(1);
+                  }}
+                  className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                    resultStateFilter === st
+                      ? "border-primary/30 bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:border-muted-foreground/50"
+                  }`}>
+                  {STATE_LABELS[st]}
+                </button>
+              ))}
             </div>
             {showResults ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
           </button>
