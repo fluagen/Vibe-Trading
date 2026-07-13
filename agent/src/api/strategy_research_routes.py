@@ -1,6 +1,6 @@
 """HTTP endpoints for strategy research — sector members + per-stock backtest.
 
-SSE streaming follows watch_pool_routes.py pattern.
+SSE streaming implementation.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ class BacktestRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# In-memory job store (matches watch_pool_routes pattern)
+# In-memory job store
 # ---------------------------------------------------------------------------
 
 _backtest_jobs: dict[str, dict[str, Any]] = {}

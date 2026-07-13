@@ -5,8 +5,7 @@ stock independently, evaluates per-stock performance metrics, and
 produces compact summaries (OHLCV snapshot + signal points) suitable for
 streaming to the frontend.
 
-Follows the ``watch_pool_runner.py`` pattern — same STRATEGY_MAP,
-same loader resolution, same per-code iteration — but extends the output
+Per-code iteration with STRATEGY_MAP and loader resolution, extending output
 to full backtest metrics instead of a single target-date signal.
 """
 
@@ -22,7 +21,7 @@ import pandas as pd
 _log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Strategy registry — same shape as watch_pool_runner.STRATEGY_MAP.
+# Strategy registry.
 # Adding a new strategy means adding an entry here + adding it to the
 # GET /strategy-research/strategies response in routes.
 # ---------------------------------------------------------------------------
