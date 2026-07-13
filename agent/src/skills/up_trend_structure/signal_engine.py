@@ -82,6 +82,7 @@ class SignalEngine:
                 pivot = float(states["pivot_low"].iloc[i])
                 close = df["close"].iloc[i]
                 low = df["low"].iloc[i]
+                prev_state = states["state"].iloc[i - 1] if i > 0 else ""
 
                 # --- Stop loss: price breaks pivot ---
                 if position_size > 0 and not pd.isna(pivot):
@@ -106,16 +107,21 @@ class SignalEngine:
                         ma_short_taken = False
                         continue
 
-                # --- Take profit: divergence/pvd unrepaired → pullback ---
+                # --- Exit: divergence/pvd unrepaired → pullback (up_phase → pullback only) ---
+                # Only exit when the pullback originates from up_phase (meaning
+                # divergence or price_volume_down was not repaired).  A
+                # pullback_end → pullback transition (止跌K not confirmed) does
+                # NOT trigger this exit — the position stays open.
                 if position_size > 0 and state == "pullback" and not in_pullback:
-                    in_pullback = True
-                    signals.iloc[i] = -1.0
-                    position_size = 0.0
-                    entry_prices = []
-                    pivot_low = float("nan")
-                    profit_taken_30 = False
-                    ma_short_taken = False
-                    continue
+                    if prev_state == "up_phase":
+                        in_pullback = True
+                        signals.iloc[i] = -1.0
+                        position_size = 0.0
+                        entry_prices = []
+                        pivot_low = float("nan")
+                        profit_taken_30 = False
+                        ma_short_taken = False
+                        continue
                 in_pullback = (state == "pullback")
 
                 # --- Take profit: 30% profit → sell half ---
@@ -149,7 +155,6 @@ class SignalEngine:
                         continue
 
                 # --- Entry: 止跌K when pullback → pullback_end ---
-                prev_state = states["state"].iloc[i - 1] if i > 0 else ""
                 if state == "pullback_end" and bsk and position_size == 0.0 and prev_state == "pullback":
                     signals.iloc[i] = 0.33
                     position_size = 0.33

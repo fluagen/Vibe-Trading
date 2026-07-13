@@ -48,11 +48,9 @@
 |--------|------|------|------|
 | 1 | **跌破 pivot** | `low < pivot_low` | 结构破位，立即清仓 |
 | 2 | **浮动亏损超限** | `(close - avg_entry) / avg_entry < -stop_loss_pct` | 默认 -3%，独立于 pivot |
-| 3 | **进入 pullback** | `state == pullback` 且之前不在 pullback 中 | 止跌K入场后次日无确认K（止跌被证伪），或 up_phase 中背离/价跌量缩未修复 → 直接退出 |
+| 3 | **进入 pullback** | `state == pullback` 且 prev 为 `up_phase` | up_phase 中背离/价跌量缩未修复 → 状态转 pullback → 平仓 |
 
-> 止损条件 3 的两个典型场景：
-> - 止跌K 入场（pullback_end），次日非确认K → 状态回 pullback → 平仓
-> - up_phase 中触发背离/价跌量缩，次日补量失败 → 状态转 pullback → 平仓
+> 止损条件 3 仅适用于从 up_phase 进入 pullback（背离/价跌量缩补量失败）。止跌K 入场后即使次日无确认K 回到 pullback，**不触发此退出**，继续持仓等待止跌或止损。
 
 #### 止盈（阶梯减仓）
 
