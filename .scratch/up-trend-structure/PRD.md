@@ -17,24 +17,24 @@
 | 起涨点 | forming bar 的最低价 |
 | 止跌K | 倒锤线(上影≥1.2×body)/大阳线(body>60%振幅) + vol>前日×1.2 + close>前日中点 |
 | 证伪K | 止跌K次日，阳线 OR close>止跌K close |
-| 上涨结构 | forming → up_phase → pullback 的完整生命周期 |
+| 上涨结构 | forming → up_phase → pullback → pullback_end 的完整生命周期 |
 
 ### 状态机
 
-5 个状态，13 条转移规则：
+6 个状态，13 条转移规则：
 
 | 当前状态 | 条件 | 新状态 | 动作 |
 |----------|------|--------|------|
 | `no_structure` | 价涨量增 | `forming` | 起涨点=当前low |
-| `forming` | (from no_structure) + 价涨量增 | `up_phase` | — |
-| `forming` | (from no_structure) + 非价涨量增 | `no_structure` | — |
-| `forming` | (from pullback) + 证伪K | `up_phase` | — |
-| `forming` | (from pullback) + 非证伪K | `pullback` | — |
+| `forming` | 价涨量增 | `up_phase` | — |
+| `forming` | 非价涨量增 | `no_structure` | — |
+| `pullback_end` | 证伪K | `up_phase` | — |
+| `pullback_end` | 非证伪K | `pullback` | — |
 | `up_phase` | 背离 or 价跌量缩 | (挂起) | 记录触发日close/vol |
 | `up_phase` | 挂起次日 + 补量成功 | `up_phase` | 延续 |
 | `up_phase` | 挂起次日 + 补量失败 | `pullback` | 上涨阶段结束 |
 | `up_phase` | 价涨量增 | `up_phase` | 延续 |
-| `pullback` | 止跌K | `forming` | 新起涨点=止跌K low |
+| `pullback` | 止跌K | `pullback_end` | 新起涨点=止跌K low |
 | `*` (除no_structure) | `low < 起涨点` | `breakdown` | — |
 | `breakdown` | 立即 | `no_structure` | — |
 
@@ -44,8 +44,8 @@
 
 | 信号值 | 触发条件 | 说明 |
 |--------|------|------|
-| 0.33 | 止跌K + `pullback→forming` + 空仓 | 入场 1/3 |
-| 0.67 | 证伪K + 已有0.33 | 加至 2/3（上限） |
+| 0.33 | 止跌K + `pullback→pullback_end` + 空仓 | 入场 1/3 |
+| 0.67 | 证伪K + `pullback_end→up_phase` + 已有0.33 | 加至 2/3（上限） |
 | ×0.5 | 浮动盈利 ≥ 30% | 止盈减半 |
 | ×0.5 | close < MA(5) | 止盈再减半 |
 | -1.0 | close < MA(10) | 清仓 |
@@ -64,8 +64,8 @@
 价涨量增(2nd) → forming → up_phase
 背离/价跌量缩  → up_phase → pullback ────→ -1.0
   (补量失败)
-止跌K ───────→ pullback → forming ──────→ 0.33
-证伪K ───────→ forming → up_phase ──────→ 0.67
+止跌K ───────→ pullback → pullback_end ──→ 0.33
+证伪K ───────→ pullback_end → up_phase ──→ 0.67
 pivot_low ───→ breakdown ──────────────→ -1.0
 盈利≥30% ─────────────────────────────→ ×0.5
 close<MA(5) ───────────────────────────→ ×0.5

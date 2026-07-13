@@ -6,11 +6,12 @@ import { MiniKLineChart } from "@/components/charts/MiniKLineChart";
 interface DetailPanelProps { data: BacktestDetailItem; onClose: () => void; }
 
 const STATE_LABELS: Record<string, string> = {
-  no_structure: "无结构", forming: "形成中", up_phase: "上涨", pullback: "回调", breakdown: "崩坏",
+  no_structure: "无结构", forming: "形成中", up_phase: "上涨",
+  pullback: "回调", pullback_end: "回调结束", breakdown: "崩坏",
 };
 const STATE_COLORS: Record<string, string> = {
   no_structure: "bg-slate-500", forming: "bg-amber-500", up_phase: "bg-emerald-500",
-  pullback: "bg-sky-500", breakdown: "bg-red-500",
+  pullback: "bg-sky-500", pullback_end: "bg-teal-500", breakdown: "bg-red-500",
 };
 
 function MetricCard({ label, value, sub, hl }: {

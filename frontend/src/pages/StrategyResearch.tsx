@@ -16,19 +16,16 @@ type SectorType = "industry" | "concept";
 type DatePreset = "30" | "60" | "120" | "250" | "custom";
 
 const STATE_COLORS: Record<string, string> = {
-  no_structure: "bg-slate-500", forming: "bg-amber-500", forming_restart: "bg-teal-500",
-  up_phase: "bg-emerald-500", pullback: "bg-sky-500", breakdown: "bg-red-500",
+  no_structure: "bg-slate-500", forming: "bg-amber-500",
+  up_phase: "bg-emerald-500", pullback: "bg-sky-500",
+  pullback_end: "bg-teal-500", breakdown: "bg-red-500",
 };
 
 const STATE_LABELS: Record<string, string> = {
-  no_structure: "无结构", forming: "形成中", forming_restart: "重启",
-  up_phase: "上涨", pullback: "回调", breakdown: "崩坏",
+  no_structure: "无结构", forming: "形成中",
+  up_phase: "上涨", pullback: "回调",
+  pullback_end: "回调结束", breakdown: "崩坏",
 };
-
-function resolveDisplayState(finalState: string, prevState?: string): string {
-  if (finalState === "forming" && prevState === "pullback") return "forming_restart";
-  return finalState;
-}
 
 const DATE_PRESETS: DatePreset[] = ["30", "60", "120", "250", "custom"];
 
@@ -579,7 +576,7 @@ export function StrategyResearch() {
                             </td>
                             <td className="px-3 py-2.5">
                               {(() => {
-                                const ds = resolveDisplayState(r.final_state, r.previous_state);
+                                const ds = r.final_state;
                                 return (
                                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-white ${STATE_COLORS[ds] || "bg-slate-500"}`}>
                                     <span className={`h-1.5 w-1.5 rounded-full ${isOpen ? "bg-white" : "bg-white/60"}`} />

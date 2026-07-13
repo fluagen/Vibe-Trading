@@ -6,12 +6,13 @@
 # ============================================================
 """FactorMiner Alpha #4 — Up-Trend Structure State.
 
-Encodes the five structure states as integers:
+Encodes the six structure states as integers:
   0 = no_structure
-  1 = forming (止跌K seen, awaiting 证伪K)
-  2 = up_phase (证伪K confirmed, uptrend active)
+  1 = forming (价涨量增 seen, awaiting confirmation)
+  2 = up_phase (uptrend active)
   3 = pullback (divergence unrepaired, pullback in progress)
   4 = breakdown (price broke below pivot_low)
+  5 = pullback_end (止跌K in pullback, awaiting 证伪K)
 
 State machine is per-column sequential (state depends on prior state + pivot_low).
 All logic inlined to pass purity gate.
@@ -26,7 +27,7 @@ __alpha_meta__ = {
     "id": "fminer_004",
     "nickname": "上涨结构状态",
     "theme": ["momentum", "volume"],
-    "formula_latex": r"S_t \in \{0,1,2,3,4\}",
+    "formula_latex": r"S_t \in \{0,1,2,3,4,5\}",
     "columns_required": ["open", "high", "low", "close", "volume"],
     "extras_required": [],
     "requires_sector": False,
@@ -129,7 +130,7 @@ def _compute_one(
     o: np.ndarray, h: np.ndarray, l_arr: np.ndarray,
     c_arr: np.ndarray, v_arr: np.ndarray, n: int,
 ) -> np.ndarray:
-    """Compute state encoding for a single stock column. Returns int array 0-4."""
+    """Compute state encoding for a single stock column. Returns int array 0-5."""
     bsk = _detect_bottom_signal_k(o, h, l_arr, c_arr, v_arr)
     ck = _detect_confirm_k(bsk, o, c_arr)
     div = _detect_divergence(c_arr, v_arr)
@@ -147,22 +148,26 @@ def _compute_one(
         is_bsk = bool(bsk[i])
         is_ck = bool(ck[i])
         is_div = bool(div[i])
+        is_puvu = (i > 0) and (c_i > c_arr[i - 1]) and (v_i > v_arr[i - 1])
 
         # Check breakdown first
-        if current_state in (1, 2, 3):  # forming, up_phase, pullback
+        if current_state in (1, 2, 3, 5):  # forming, up_phase, pullback, pullback_end
             if low_i < current_pivot:
                 current_state = 4  # breakdown
                 current_pivot = np.nan
                 prev_divergence = False
 
         if current_state == 0:  # no_structure
-            if is_bsk:
+            if is_puvu:
                 current_state = 1  # forming
                 current_pivot = low_i
 
         elif current_state == 1:  # forming
-            if is_ck:
+            if is_puvu:
                 current_state = 2  # up_phase
+            else:
+                current_state = 0  # no_structure
+                current_pivot = np.nan
 
         elif current_state == 2:  # up_phase
             if prev_divergence:
@@ -176,13 +181,19 @@ def _compute_one(
 
         elif current_state == 3:  # pullback
             if is_bsk:
-                current_state = 1  # forming
+                current_state = 5  # pullback_end
                 current_pivot = low_i
 
+        elif current_state == 5:  # pullback_end
+            if is_ck:
+                current_state = 2  # up_phase
+            else:
+                current_state = 3  # pullback
+
         elif current_state == 4:  # breakdown
-            if is_bsk:
-                current_state = 1  # forming
-                current_pivot = low_i
+            current_state = 0  # no_structure
+            current_pivot = np.nan
+            prev_divergence = False
 
         states[i] = current_state
 

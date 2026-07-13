@@ -168,17 +168,17 @@ class UpTrendStructure:
         v2 state transitions:
 
         no_structure + 价涨量增 → forming (pivot = current low)
-          forming (from no_structure) + 价涨量增 → up_phase
-          forming (from no_structure) + !价涨量增 → no_structure
+          forming + 价涨量增 → up_phase
+          forming + !价涨量增 → no_structure
 
         up_phase + 价涨量增 → up_phase (continue)
         up_phase + divergence/价跌量缩 → pending repair
           repair next day → up_phase (continue)
           no repair next day → pullback
 
-        pullback + 止跌K → forming (new pivot)
-          forming (from pullback) + 证伪K → up_phase
-          forming (from pullback) + !证伪K → pullback
+        pullback + 止跌K → pullback_end (new pivot)
+          pullback_end + 证伪K → up_phase
+          pullback_end + !证伪K → pullback
 
         any(!no_structure) + low < pivot → breakdown → no_structure
         """
@@ -188,7 +188,6 @@ class UpTrendStructure:
 
         current_state = "no_structure"
         current_pivot = float("nan")
-        forming_source = None
 
         # Pending exit condition awaiting next-day repair (补量)
         pending_exit = None  # "divergence" or "price_volume_down"
@@ -211,7 +210,6 @@ class UpTrendStructure:
                     current_state = "breakdown"
                     current_pivot = float("nan")
                     pending_exit = None
-                    forming_source = None
 
             # --- breakdown → no_structure (immediate) ---
             if current_state == "breakdown":
@@ -222,25 +220,14 @@ class UpTrendStructure:
                 if is_puvu:
                     current_state = "forming"
                     current_pivot = low_i
-                    forming_source = "no_structure"
 
             # --- forming ---
             elif current_state == "forming":
-                if forming_source == "no_structure":
-                    if is_puvu:
-                        current_state = "up_phase"
-                        forming_source = None
-                    else:
-                        current_state = "no_structure"
-                        current_pivot = float("nan")
-                        forming_source = None
-                elif forming_source == "pullback":
-                    if is_ck:
-                        current_state = "up_phase"
-                        forming_source = None
-                    else:
-                        current_state = "pullback"
-                        forming_source = None
+                if is_puvu:
+                    current_state = "up_phase"
+                else:
+                    current_state = "no_structure"
+                    current_pivot = float("nan")
 
             # --- up_phase ---
             elif current_state == "up_phase":
@@ -267,9 +254,15 @@ class UpTrendStructure:
             # --- pullback ---
             elif current_state == "pullback":
                 if is_bsk:
-                    current_state = "forming"
+                    current_state = "pullback_end"
                     current_pivot = low_i
-                    forming_source = "pullback"
+
+            # --- pullback_end ---
+            elif current_state == "pullback_end":
+                if is_ck:
+                    current_state = "up_phase"
+                else:
+                    current_state = "pullback"
 
             states[i] = current_state
             pivots[i] = current_pivot

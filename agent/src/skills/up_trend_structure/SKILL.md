@@ -21,8 +21,8 @@ OHLCV → UpTrendStructure.compute() → structure states
 
 | Trigger | Signal | Description |
 |---------|--------|-------------|
-| 止跌K in forming | 0.33 | Trial entry — 1/3 position |
-| 证伪K in forming (pullback path) | 0.67 | Confirm + add — 2/3 position (max) |
+| 止跌K → pullback_end | 0.33 | Trial entry — 1/3 position |
+| 证伪K → up_phase (from pullback_end) | 0.67 | Confirm + add — 2/3 position (max) |
 
 ## Exit Rules (v2)
 
@@ -54,6 +54,7 @@ OHLCV → UpTrendStructure.compute() → structure states
 | `forming` | 1st day 价涨量增, awaiting confirmation |
 | `up_phase` | 2+ consecutive 价涨量增 confirmed |
 | `pullback` | Up phase ended (divergence/pvd unrepaired) |
+| `pullback_end` | Pullback ended (止跌K detected, awaiting 证伪K) |
 | `breakdown` | Price < pivot_low (transient → no_structure) |
 
 ## Tunable Parameters (v2)

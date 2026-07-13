@@ -402,7 +402,7 @@ class TestPullbackToNextUpPhase:
         # Day 5 (idx 4): divergence unrepaired → pullback
         assert result.iloc[4]["state"] == "pullback"
         # Day 6 (idx 5): 止跌K in pullback → forming (new pivot=101, above old pivot)
-        assert result.iloc[5]["state"] == "forming"
+        assert result.iloc[5]["state"] == "pullback_end"
         assert bool(result.iloc[5]["bottom_signal_k"]) is True
         # Day 7 (idx 6): 证伪K → up_phase (new structure)
         assert result.iloc[6]["state"] == "up_phase"

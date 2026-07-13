@@ -148,17 +148,17 @@ class SignalEngine:
                         ma_short_taken = False
                         continue
 
-                # --- Entry: 止跌K only when pullback → forming ---
+                # --- Entry: 止跌K when pullback → pullback_end ---
                 prev_state = states["state"].iloc[i - 1] if i > 0 else ""
-                if state == "forming" and bsk and position_size == 0.0 and prev_state == "pullback":
+                if state == "pullback_end" and bsk and position_size == 0.0 and prev_state == "pullback":
                     signals.iloc[i] = 0.33
                     position_size = 0.33
                     entry_prices = [close]
                     pivot_low = pivot if not pd.isna(pivot) else low
                     profit_taken_30 = False
                     ma_short_taken = False
-                # --- Entry: 证伪K + already 0.33 → add to 0.67 ---
-                elif state in ("forming", "up_phase") and ck and position_size == 0.33:
+                # --- Entry: 证伪K when pullback_end → up_phase, add to 0.67 ---
+                elif state == "up_phase" and ck and position_size == 0.33 and prev_state == "pullback_end":
                     signals.iloc[i] = 0.67
                     position_size = 0.67
                     entry_prices.append(close)
