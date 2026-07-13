@@ -15,7 +15,7 @@ const DEFAULTS: StrategyConfigParams = {
   up_phase_min_bars: 3,
   volume_surge_ratio: 1.5,
   big_bull_body_ratio: 0.6,
-  inv_hammer_shadow_ratio: 1.5,
+  inv_hammer_shadow_ratio: 1.1,
   close_above_prev_mid: 0.5,
   stop_loss_pct: 0.03,
   divergence_repair_bars: 1,
