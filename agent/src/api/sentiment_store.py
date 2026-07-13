@@ -240,11 +240,12 @@ class SentimentStore:
             params.append(end_date)
 
         sql = (
+            f"SELECT * FROM ("
             f"SELECT trade_date, sector_type, bk_code, bk_name, "
             f"index_type, change_pct, amount, net_inflow, collected_at "
             f"FROM market_sector {where} "
-            f"ORDER BY trade_date ASC "
-            f"LIMIT ?"
+            f"ORDER BY trade_date DESC LIMIT ?"
+            f") ORDER BY trade_date ASC"
         )
         params.append(limit)
         return [dict(r) for r in self.conn.execute(sql, params).fetchall()]

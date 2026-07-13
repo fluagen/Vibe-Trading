@@ -150,9 +150,10 @@ def register_sentiment_routes(
         board_code: str = Query(..., min_length=1),
         days: int = Query(_DEFAULT_DAYS, ge=1, le=_MAX_DAYS),
         board_type: str = Query("industry"),
+        date: str = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     ) -> dict[str, Any]:
         """单板块拥挤度趋势 + 资金流向历史。"""
-        return _service.get_sector_detail(board_code=board_code, board_type=board_type, days=days)
+        return _service.get_sector_detail(board_code=board_code, board_type=board_type, days=days, trade_date=date or None)
 
     # ---------------------------------------------------------------
     # GET /sentiment/history

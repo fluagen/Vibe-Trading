@@ -218,10 +218,11 @@ export const api = {
     const qs = q.toString();
     return request<SentimentBoardsResponse>(`/sentiment/boards${qs ? `?${qs}` : ""}`);
   },
-  getSectorDetail: (params: { board_code: string; days?: number; board_type?: string }) => {
+  getSectorDetail: (params: { board_code: string; days?: number; board_type?: string; date?: string }) => {
     const q = new URLSearchParams({ board_code: params.board_code });
     if (params.days !== undefined) q.set("days", String(params.days));
     if (params.board_type) q.set("board_type", params.board_type);
+    if (params.date) q.set("date", params.date);
     return request<SectorDetailResponse>(`/sentiment/sector-detail?${q.toString()}`);
   },
   getSentimentHistory: (params: { board_code: string; start_date: string; end_date: string; board_type?: string }) => {

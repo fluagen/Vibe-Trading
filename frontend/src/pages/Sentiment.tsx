@@ -141,11 +141,11 @@ export function Sentiment() {
     setSelectedBoard(board);
     setDetailLoading(true);
     try {
-      const data = await api.getSectorDetail({ board_code: board.board_code, days: 20, board_type: boardType });
+      const data = await api.getSectorDetail({ board_code: board.board_code, days: 20, board_type: boardType, date: overviewDate });
       if (data.ok) setDetailData(data.data);
     } catch { /* ignore */ }
     finally { setDetailLoading(false); }
-  }, [boardType]);
+  }, [boardType, overviewDate]);
 
   const loadHistory = useCallback(async () => {
     if (!histCode) return;

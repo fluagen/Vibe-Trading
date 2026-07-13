@@ -237,14 +237,14 @@ class SentimentService:
 
         # 资金偏好（连续流入天数）— 只对拥挤度排序的前 page_size 条计算
         for b in by_crowding[:page_size]:
-            hist = self.store.get_sector_history(b["board_code"], board_type, limit=10)
+            hist = self.store.get_sector_history(b["board_code"], board_type, end_date=trade_date, limit=10)
             cons, fav = consecutive_inflow_days(hist)
             b["consecutive_inflow_days"] = cons
             b["is_favored"] = fav
 
         for b in by_inflow[:page_size]:
             if "is_favored" not in b:
-                hist = self.store.get_sector_history(b["board_code"], board_type, limit=10)
+                hist = self.store.get_sector_history(b["board_code"], board_type, end_date=trade_date, limit=10)
                 cons, fav = consecutive_inflow_days(hist)
                 b["consecutive_inflow_days"] = cons
                 b["is_favored"] = fav
@@ -271,13 +271,13 @@ class SentimentService:
     # -- sector detail --------------------------------------------------------
 
     def get_sector_detail(
-        self, board_code: str, board_type: str = "industry", days: int = 20
+        self, board_code: str, board_type: str = "industry", days: int = 20, trade_date: str | None = None
     ) -> dict[str, Any]:
         """单板块拥挤度趋势 + 资金流向。"""
         if board_type not in _VALID_BOARD_TYPES:
             board_type = "industry"
 
-        hist = self.store.get_sector_history(board_code, board_type, limit=days)
+        hist = self.store.get_sector_history(board_code, board_type, end_date=trade_date, limit=days)
         if not hist:
             return {"ok": False, "error": f"No data for {board_code}"}
 
