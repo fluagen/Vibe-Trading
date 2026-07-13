@@ -1290,6 +1290,7 @@ export interface BacktestSummaryItem {
   code: string;
   name: string;
   final_state: string;
+  previous_state?: string;
   trade_count: number;
   win_rate: number;
   win_count: number;

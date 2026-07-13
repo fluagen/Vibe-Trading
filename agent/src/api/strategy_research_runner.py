@@ -102,11 +102,12 @@ _STATE_LABELS: dict[int, str] = {
 }
 
 
-def _state_label(val: float | int) -> str:
+def _state_label(val: float | int | str) -> str:
     try:
-        return _STATE_LABELS.get(int(val), "unknown")
+        return _STATE_LABELS.get(int(val), str(val))
     except (ValueError, TypeError):
-        return "unknown"
+        # State machine now returns string labels directly (e.g. "up_phase")
+        return str(val) if val else "no_structure"
 
 
 # ---------------------------------------------------------------------------
@@ -160,10 +161,13 @@ def run_single_stock_backtest(
     # 5. Build OHLCV snapshot (last ~100 bars for mini chart).
     ohlcv_snapshot = _build_ohlcv_snapshot(df, states, signal_points)
 
-    # 6. Current state (latest bar).
+    # 6. Current state (latest bar) + previous state for transition display.
     final_state = "no_structure"
+    previous_state = "no_structure"
     if not states.empty and "state" in states.columns:
         final_state = _state_label(states["state"].iloc[-1])
+        if len(states) >= 2:
+            previous_state = _state_label(states["state"].iloc[-2])
 
     # 7. States summary (count of days in each state).
     states_summary: dict[str, int] = {}
@@ -194,6 +198,7 @@ def run_single_stock_backtest(
         "code": code,
         "name": code,
         "final_state": final_state,
+        "previous_state": previous_state,
         "trade_count": metrics["trade_count"],
         "win_rate": metrics["win_rate"],
         "win_count": metrics["win_count"],
@@ -291,6 +296,7 @@ def _empty_result(code: str) -> dict[str, Any]:
         "code": code,
         "name": code,
         "final_state": "no_structure",
+        "previous_state": "no_structure",
         "trade_count": 0,
         "win_rate": 0.0,
         "win_count": 0,

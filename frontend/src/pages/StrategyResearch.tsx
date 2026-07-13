@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FlaskConical, Play, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowUpDown, ArrowDown, ArrowUp, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FlaskConical, Play, Search, SlidersHorizontal } from "lucide-react";
 import {
   api,
   type SectorMemberItem,
@@ -16,15 +16,27 @@ type SectorType = "industry" | "concept";
 type DatePreset = "30" | "60" | "120" | "250" | "custom";
 
 const STATE_COLORS: Record<string, string> = {
-  no_structure: "bg-slate-500", forming: "bg-amber-500", up_phase: "bg-emerald-500",
-  pullback: "bg-sky-500", breakdown: "bg-red-500",
+  no_structure: "bg-slate-500", forming: "bg-amber-500", forming_restart: "bg-teal-500",
+  up_phase: "bg-emerald-500", pullback: "bg-sky-500", breakdown: "bg-red-500",
 };
 
 const STATE_LABELS: Record<string, string> = {
-  no_structure: "无结构", forming: "形成中", up_phase: "上涨", pullback: "回调", breakdown: "崩坏",
+  no_structure: "无结构", forming: "形成中", forming_restart: "重启",
+  up_phase: "上涨", pullback: "回调", breakdown: "崩坏",
 };
 
+function resolveDisplayState(finalState: string, prevState?: string): string {
+  if (finalState === "forming" && prevState === "pullback") return "forming_restart";
+  return finalState;
+}
+
 const DATE_PRESETS: DatePreset[] = ["30", "60", "120", "250", "custom"];
+
+function getXueqiuUrl(code: string): string {
+  const normalized = code.replace(/\.(SH|SZ|BJ)$/i, "");
+  const prefix = normalized.startsWith("6") ? "SH" : "SZ";
+  return `https://xueqiu.com/S/${prefix}${normalized}`;
+}
 
 export function StrategyResearch() {
   const { t } = useTranslation();
@@ -66,9 +78,47 @@ export function StrategyResearch() {
   // Results pagination
   const [resultPage, setResultPage] = useState(1);
   const [resultPageSize, setResultPageSize] = useState(20);
-  const totalResultPages = Math.max(1, Math.ceil(results.length / resultPageSize));
+  type ResultSortField = "trade_count" | "win_rate" | "cumulative_return" | "final_state";
+  const [resultSortField, setResultSortField] = useState<ResultSortField>("cumulative_return");
+  const [resultSortOrder, setResultSortOrder] = useState<"asc" | "desc">("desc");
+
+  const toggleResultSort = (field: ResultSortField) => {
+    if (resultSortField === field) {
+      setResultSortOrder((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setResultSortField(field);
+      setResultSortOrder("desc");
+    }
+    setResultPage(1);
+  };
+
+  const resultSortIcon = (field: ResultSortField) => {
+    if (resultSortField !== field) return <ArrowUpDown className="h-3 w-3 text-muted-foreground/50" />;
+    return resultSortOrder === "desc"
+      ? <ArrowDown className="h-3 w-3 text-primary" />
+      : <ArrowUp className="h-3 w-3 text-primary" />;
+  };
+
+  const sortedResults = useMemo(() => {
+    const list = [...results];
+    const dir = resultSortOrder === "desc" ? -1 : 1;
+    list.sort((a, b) => {
+      const va = a[resultSortField];
+      const vb = b[resultSortField];
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (resultSortField === "final_state") {
+        return String(va).localeCompare(String(vb)) * dir;
+      }
+      return (Number(va) - Number(vb)) * dir;
+    });
+    return list;
+  }, [results, resultSortField, resultSortOrder]);
+
+  const totalResultPages = Math.max(1, Math.ceil(sortedResults.length / resultPageSize));
   const safeResultPage = Math.min(resultPage, totalResultPages);
-  const pagedResults = results.slice((safeResultPage - 1) * resultPageSize, safeResultPage * resultPageSize);
+  const pagedResults = sortedResults.slice((safeResultPage - 1) * resultPageSize, safeResultPage * resultPageSize);
 
   // Code → name lookup from members
   const codeToName = useMemo(() => {
@@ -194,7 +244,7 @@ export function StrategyResearch() {
   const hasSelection = selectedCodes.size > 0;
 
   return (
-    <div className="flex h-full flex-col gap-5 overflow-auto p-6">
+    <div className="flex flex-col gap-5 p-6">
       {/* Header row: icon + title | tabs | params button */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -386,9 +436,9 @@ export function StrategyResearch() {
           </button>
           {showMembers && (
             <>
-              <div className="max-h-[360px] overflow-auto">
+              <div className="overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm">
+                  <thead className="bg-muted/30">
                     <tr className="text-[10px] text-muted-foreground uppercase tracking-wider">
                       <th className="w-8 px-2 py-2"><input type="checkbox" checked={selectedCodes.size === members.length && members.length > 0} onChange={toggleAll} className="rounded" /></th>
                       <th className="px-2 py-2 text-left font-medium">代码</th>
@@ -427,7 +477,6 @@ export function StrategyResearch() {
             </div>
 
             {/* Members pagination */}
-            {members.length > memberPageSize && (
               <div className="px-4 py-2.5 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
                 <div className="flex items-center gap-2">
                   <span>每页</span>
@@ -453,7 +502,6 @@ export function StrategyResearch() {
                     className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">末页</button>
                 </div>
               </div>
-            )}
             </>
           )}
         </div>
@@ -482,18 +530,30 @@ export function StrategyResearch() {
           </button>
           {showResults && (
             <>
-              <div className="max-h-[550px] overflow-y-auto overflow-x-auto">
+              <div className="overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead className="bg-muted/30 backdrop-blur-sm sticky top-0 z-10">
+                  <thead className="bg-muted/30">
                     <tr className="text-[10px] text-muted-foreground uppercase tracking-wider">
                       <th className="px-3 py-2 text-left font-medium">代码</th>
                       <th className="px-3 py-2 text-left font-medium">名称</th>
-                      <th className="px-3 py-2 text-left font-medium">状态</th>
-                      <th className="px-3 py-2 text-right font-medium">交易</th>
-                      <th className="px-3 py-2 text-right font-medium">胜率</th>
+                      <th className="px-3 py-2 text-left font-medium cursor-pointer select-none hover:text-foreground transition-colors"
+                        onClick={() => toggleResultSort("final_state")}>
+                        <span className="inline-flex items-center gap-1">状态 {resultSortIcon("final_state")}</span>
+                      </th>
+                      <th className="px-3 py-2 text-right font-medium cursor-pointer select-none hover:text-foreground transition-colors"
+                        onClick={() => toggleResultSort("trade_count")}>
+                        <span className="inline-flex items-center gap-1">交易 {resultSortIcon("trade_count")}</span>
+                      </th>
+                      <th className="px-3 py-2 text-right font-medium cursor-pointer select-none hover:text-foreground transition-colors"
+                        onClick={() => toggleResultSort("win_rate")}>
+                        <span className="inline-flex items-center gap-1">胜率 {resultSortIcon("win_rate")}</span>
+                      </th>
                       <th className="px-3 py-2 text-right font-medium">止跌K</th>
                       <th className="px-3 py-2 text-right font-medium">证伪K</th>
-                      <th className="px-3 py-2 text-right font-medium">累计收益</th>
+                      <th className="px-3 py-2 text-right font-medium cursor-pointer select-none hover:text-foreground transition-colors"
+                        onClick={() => toggleResultSort("cumulative_return")}>
+                        <span className="inline-flex items-center gap-1">累计收益 {resultSortIcon("cumulative_return")}</span>
+                      </th>
                       <th className="px-3 py-2 text-center font-medium w-16">详情</th>
                     </tr>
                   </thead>
@@ -505,15 +565,28 @@ export function StrategyResearch() {
                           <tr key={r.code}
                             onClick={() => setSelectedResultCode(isOpen ? null : r.code)}
                             className={`cursor-pointer transition-colors hover:bg-muted/40 ${isOpen ? "bg-primary/5 hover:bg-primary/8" : ""}`}>
-                            <td className="px-3 py-2.5 font-mono tabular-nums text-foreground font-medium">{r.code}</td>
-                            <td className="px-3 py-2.5 text-xs text-foreground/80 truncate max-w-[80px]" title={codeToName[r.code] || r.name || ""}>
-                              {codeToName[r.code] || r.name || r.code}
+                            <td className="px-3 py-2.5 font-mono tabular-nums font-medium">
+                              <a href={getXueqiuUrl(r.code)} target="_blank" rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-primary hover:underline">{r.code}</a>
+                            </td>
+                            <td className="px-3 py-2.5 text-xs truncate max-w-[80px]" title={codeToName[r.code] || r.name || ""}>
+                              <a href={getXueqiuUrl(r.code)} target="_blank" rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-primary/80 hover:text-primary hover:underline">
+                                {codeToName[r.code] || r.name || r.code}
+                              </a>
                             </td>
                             <td className="px-3 py-2.5">
-                              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-white ${STATE_COLORS[r.final_state] || "bg-slate-500"}`}>
-                                <span className={`h-1.5 w-1.5 rounded-full ${isOpen ? "bg-white" : "bg-white/60"}`} />
-                                {STATE_LABELS[r.final_state] || r.final_state}
-                              </span>
+                              {(() => {
+                                const ds = resolveDisplayState(r.final_state, r.previous_state);
+                                return (
+                                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-white ${STATE_COLORS[ds] || "bg-slate-500"}`}>
+                                    <span className={`h-1.5 w-1.5 rounded-full ${isOpen ? "bg-white" : "bg-white/60"}`} />
+                                    {STATE_LABELS[ds] || ds}
+                                  </span>
+                                );
+                              })()}
                             </td>
                             <td className="px-3 py-2.5 text-right tabular-nums font-mono">{r.trade_count}</td>
                             <td className={`px-3 py-2.5 text-right tabular-nums font-mono ${
@@ -545,7 +618,6 @@ export function StrategyResearch() {
               </div>
 
               {/* Pagination */}
-              {results.length > resultPageSize && (
                 <div className="px-4 py-2.5 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-2">
                     <span>每页</span>
@@ -574,7 +646,6 @@ export function StrategyResearch() {
                       className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">末页</button>
                   </div>
                 </div>
-              )}
             </>
           )}
         </div>
