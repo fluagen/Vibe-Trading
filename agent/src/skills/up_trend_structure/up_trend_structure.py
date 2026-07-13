@@ -52,7 +52,7 @@ class UpTrendStructure:
         up_phase_min_bars: int = 2,
         volume_surge_ratio: float = 1.2,
         big_bull_body_ratio: float = 0.6,
-        inv_hammer_shadow_ratio: float = 1.2,
+        inv_hammer_shadow_ratio: float = 1.1,
         close_above_prev_mid: float = 0.5,
         divergence_repair_bars: int = 1,
     ):
@@ -189,6 +189,10 @@ class UpTrendStructure:
         current_state = "no_structure"
         current_pivot = float("nan")
 
+        # Pivot saved before entering pullback_end, so it can be restored
+        # if pullback_end fails to transition to up_phase (no confirm K).
+        pre_bsk_pivot = float("nan")
+
         # Pending exit condition awaiting next-day repair (补量)
         pending_exit = None  # "divergence" or "price_volume_down"
         pending_close = float("nan")
@@ -254,6 +258,7 @@ class UpTrendStructure:
             # --- pullback ---
             elif current_state == "pullback":
                 if is_bsk:
+                    pre_bsk_pivot = current_pivot
                     current_state = "pullback_end"
                     current_pivot = low_i
 
@@ -261,8 +266,11 @@ class UpTrendStructure:
             elif current_state == "pullback_end":
                 if is_ck:
                     current_state = "up_phase"
+                    pre_bsk_pivot = float("nan")
                 else:
                     current_state = "pullback"
+                    current_pivot = pre_bsk_pivot
+                    pre_bsk_pivot = float("nan")
 
             states[i] = current_state
             pivots[i] = current_pivot
