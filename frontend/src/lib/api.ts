@@ -1268,6 +1268,7 @@ export interface OHLCSnapshotBar {
   close: number;
   volume: number;
   has_signal: boolean;
+  state: string;
 }
 
 export interface TradeSignal {

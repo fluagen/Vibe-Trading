@@ -482,7 +482,7 @@ export function StrategyResearch() {
           </button>
           {showResults && (
             <>
-              <div className="max-h-[450px] overflow-y-auto overflow-x-auto">
+              <div className="max-h-[550px] overflow-y-auto overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead className="bg-muted/30 backdrop-blur-sm sticky top-0 z-10">
                     <tr className="text-[10px] text-muted-foreground uppercase tracking-wider">

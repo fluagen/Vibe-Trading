@@ -65,7 +65,7 @@ class TestBottomSignalKInvertedHammer:
             highs=[102.0, 110.0],
             lows=[90.0, 96.0],
             closes=[90.0, 99.0],
-            volumes=[10000, 14000],
+            volumes=[10000, 11500],
         )
         detector = UpTrendStructure()
         result = detector.compute(df)

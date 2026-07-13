@@ -158,7 +158,7 @@ def run_single_stock_backtest(
     signal_points = _build_signal_points(df, sig_series)
 
     # 5. Build OHLCV snapshot (last ~100 bars for mini chart).
-    ohlcv_snapshot = _build_ohlcv_snapshot(df, signal_points)
+    ohlcv_snapshot = _build_ohlcv_snapshot(df, states, signal_points)
 
     # 6. Current state (latest bar).
     final_state = "no_structure"
@@ -423,31 +423,33 @@ def _build_signal_points(
 ) -> list[dict[str, Any]]:
     """Extract signal change points for frontend chart markers."""
     points: list[dict[str, Any]] = []
-    prev = 0.0
+    position = 0.0
     for idx in signals.index:
         sig = float(signals.loc[idx])
-        if sig != prev:
-            entry_types = {0.33: "entry_trial", 0.67: "entry_confirm", 1.0: "entry_full"}
-            exit_types = {-1.0: "exit"}
-            if sig > 0:
-                stype = entry_types.get(round(sig, 2), "entry")
-            elif sig < 0:
-                stype = exit_types.get(round(sig, 2), "exit")
+        if sig == 0.0:
+            continue
+        entry_types = {0.33: "entry_trial", 0.67: "entry_confirm", 1.0: "entry_full"}
+        if sig > 0:
+            if position > 0 and sig < position:
+                stype = "take_profit"
             else:
-                stype = "flat"
+                stype = entry_types.get(round(sig, 2), "entry")
+            position = sig
+        else:  # sig < 0
+            stype = "exit"
+            position = 0.0
 
-            try:
-                price = float(df["close"].loc[idx])
-            except (KeyError, TypeError):
-                price = 0.0
+        try:
+            price = float(df["close"].loc[idx])
+        except (KeyError, TypeError):
+            price = 0.0
 
-            points.append({
-                "date": str(idx)[:10],
-                "type": stype,
-                "price": round(price, 2),
-                "signal_value": round(sig, 2),
-            })
-        prev = sig
+        points.append({
+            "date": str(idx)[:10],
+            "type": stype,
+            "price": round(price, 2),
+            "signal_value": round(sig, 2),
+        })
     return points
 
 
@@ -478,29 +480,31 @@ def _build_trade_records(
 
     # Extract signal change points preserving order and value.
     events: list[dict[str, Any]] = []
-    prev = 0.0
+    position = 0.0
     for idx in signals.index:
         sig = float(signals.loc[idx])
-        if sig != prev:
-            entry_types = {0.33: "entry_trial", 0.67: "entry_confirm", 1.0: "entry_full"}
-            exit_types = {-1.0: "exit"}
-            if sig > 0:
-                stype = entry_types.get(round(sig, 2), "entry")
-            elif sig < 0:
-                stype = exit_types.get(round(sig, 2), "exit")
+        if sig == 0.0:
+            continue
+        entry_types = {0.33: "entry_trial", 0.67: "entry_confirm", 1.0: "entry_full"}
+        if sig > 0:
+            if position > 0 and sig < position:
+                stype = "take_profit"
             else:
-                stype = "flat"
-            try:
-                price = float(close.loc[idx])
-            except (KeyError, TypeError):
-                price = 0.0
-            events.append({
-                "date": str(idx)[:10],
-                "type": stype,
-                "price": round(price, 2),
-                "signal_value": round(sig, 2),
-            })
-        prev = sig
+                stype = entry_types.get(round(sig, 2), "entry")
+            position = sig
+        else:  # sig < 0
+            stype = "exit"
+            position = 0.0
+        try:
+            price = float(close.loc[idx])
+        except (KeyError, TypeError):
+            price = 0.0
+        events.append({
+            "date": str(idx)[:10],
+            "type": stype,
+            "price": round(price, 2),
+            "signal_value": round(sig, 2),
+        })
 
     # Group events into trades: entry events → exit event.
     trades: list[dict[str, Any]] = []
@@ -604,13 +608,14 @@ def _infer_exit_reason(
 
 def _build_ohlcv_snapshot(
     df: pd.DataFrame,
+    states: pd.DataFrame,
     signal_points: list[dict[str, Any]],
     max_bars: int = 100,
 ) -> list[dict[str, Any]]:
     """Build a compact OHLCV snapshot (last *max_bars*) for mini chart.
 
-    Returns a list of dicts with date, open, high, low, close, volume + a
-    ``has_signal`` boolean flag so the frontend can overlay markers.
+    Returns a list of dicts with date, open, high, low, close, volume,
+    ``has_signal`` boolean, and ``state`` string for state-coloring.
     """
     if df is None or df.empty:
         return []
@@ -622,6 +627,12 @@ def _build_ohlcv_snapshot(
     for idx in df_slice.index:
         date_str = str(idx)[:10]
         try:
+            state_val = ""
+            if states is not None and not states.empty and "state" in states.columns:
+                try:
+                    state_val = str(states.loc[idx, "state"])
+                except (KeyError, TypeError):
+                    pass
             bar = {
                 "date": date_str,
                 "open": round(float(df_slice.loc[idx, "open"]), 2),
@@ -630,6 +641,7 @@ def _build_ohlcv_snapshot(
                 "close": round(float(df_slice.loc[idx, "close"]), 2),
                 "volume": int(df_slice.loc[idx, "volume"]),
                 "has_signal": date_str in signal_dates,
+                "state": state_val,
             }
         except (KeyError, TypeError, ValueError):
             continue
