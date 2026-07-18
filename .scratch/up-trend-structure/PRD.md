@@ -19,6 +19,60 @@
 | 证伪K | 止跌K次日，阳线 OR close>止跌K close |
 | 上涨结构 | forming → up_phase → pullback → pullback_end 的完整生命周期 |
 
+### 指标体系
+
+策略所有指标均从日线 OHLCV（open/high/low/close/volume）衍生，不依赖外部数据源。分四个层级：
+
+#### 一、K线形态指标
+
+| 指标 | 计算方式 | 用途 |
+|------|----------|------|
+| **实体 (body)** | `abs(close - open)` | 判断K线阴阳及实体大小 |
+| **振幅 (range)** | `high - low` | 当日波动区间 |
+| **上影线 (upper_shadow)** | `high - max(open, close)` | 倒锤子线检测 |
+| **下影线 (lower_shadow)** | `min(open, close) - low` | 锤子线检测 |
+| **前日实体中点 (prev_mid)** | `(prev_open + prev_close) / 2` | 止跌K收盘位判断基准 |
+
+**止跌K（两种形态）**：
+
+| 形态 | 条件 |
+|------|------|
+| **形态一：原生止跌K** | 前日阴线 + (倒锤子: 上影≥`inv_hammer_shadow_ratio`×实体) 或 (大阳线: 实体/振幅>`big_bull_body_ratio`) + 收盘>前日中点 + 放量>前日×`volume_surge_ratio` |
+| **形态二：两日筑底** | D0阴线 → D1阳线放量(非止跌K) → D2阳线放量+收盘>D0中点，D2为止跌K |
+
+**证伪K**：前日止跌K + 当日(收阳 或 close>前日close)
+
+#### 二、量价关系指标
+
+| 指标 | 定义 | 方向信号 |
+|------|------|----------|
+| **价涨量增 (price_up_volume_up)** | `close > prev_close` AND `volume > prev_volume` | 多头确认，驱动 forming→up_phase |
+| **价跌量缩 (price_volume_down)** | `close < prev_close` AND `volume < prev_volume` | 回调信号，在 up_phase 中触发挂起退出 |
+| **量价背离 (divergence)** | (价涨量缩) OR (量涨价跌) | 预警信号，在 up_phase 中触发挂起退出 |
+| **补量修复 (repair)** | `close > 触发日close` AND `volume > 触发日volume` | 解除挂起，延续 up_phase |
+
+#### 三、均线指标
+
+| 指标 | 计算 | 默认周期 | 用途 |
+|------|------|----------|------|
+| **MA(short)** | `close.rolling(ma_short).mean()` | 5 | 第二档止盈：收盘跌破 → 减仓一半 |
+| **MA(mid)** | `close.rolling(ma_mid).mean()` | 10 | 第三档止盈：收盘跌破 → 全部清仓 |
+
+#### 四、状态机衍生指标
+
+`UpTrendStructure.compute()` 输出 DataFrame 包含以下列：
+
+| 列名 | 类型 | 说明 |
+|------|------|------|
+| `state` | `str` | 当前状态：`no_structure` / `forming` / `up_phase` / `pullback` / `pullback_end` / `breakdown` |
+| `bottom_signal_k` | `bool` | 当日为止跌K |
+| `confirm_k` | `bool` | 当日为证伪K |
+| `divergence` | `bool` | 当日量价背离 |
+| `price_up_volume_up` | `bool` | 当日价涨量增 |
+| `price_volume_down` | `bool` | 当日价跌量缩 |
+| `pivot_low` | `float` | 当前结构的起涨点最低价（止损基准） |
+| `pullback_depth_pct` | `float` | 回调深度百分比 |
+
 ### 状态机
 
 6 个状态，13 条转移规则：
@@ -127,3 +181,6 @@ Prior art: `agent/tests/test_up_trend_structure.py`, `agent/tests/test_structure
 - 多股票组合仓位管理
 - `watch_pool_runner.py` / `screen_bottom_k.py` 适配
 - 前端 UI 变更
+
+## 总结
+该策略是一个纯量价+均线的状态机策略，不依赖任何宏观/基本面/资金流指标。 核心逻辑是把价格行为归纳为"无结构→形成→上涨→回调→回调结束"的状态流转，通过 止跌K 和 证伪K 触发入场，通过 pivot 止损和三档阶梯止盈（30%利润、MA5、MA10）来管理出场。
