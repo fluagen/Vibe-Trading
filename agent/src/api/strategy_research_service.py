@@ -47,10 +47,28 @@ class StrategyResearchService:
         }
 
     def get_available_trading_days(self, limit: int = 30) -> dict[str, Any]:
-        """Return available trading dates from sentiment data."""
+        """Return available trading dates.
+
+        Generates weekdays backwards from the latest known trading day in
+        ``market_total``.  This avoids the 50-row ceiling when the sentiment
+        DB only covers recent history — the data loaders have years of OHLCV,
+        so the date picker should reflect that.
+        """
         store = SentimentStore()
-        dates = store.get_available_dates(limit=limit)
         latest = store.get_latest_trading_day()
+        if not latest:
+            return {"dates": [], "latest": None}
+
+        from datetime import datetime as dt, timedelta
+
+        anchor = dt.strptime(latest, "%Y-%m-%d")
+        dates: list[str] = []
+        cursor = anchor
+        while len(dates) < limit:
+            if cursor.weekday() < 5:  # Mon=0 … Fri=4
+                dates.append(cursor.strftime("%Y-%m-%d"))
+            cursor -= timedelta(days=1)
+
         return {"dates": dates, "latest": latest}
 
 

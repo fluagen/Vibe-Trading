@@ -137,7 +137,7 @@ export function StrategyResearch() {
   }, []);
 
   useEffect(() => {
-    api.getTradingDays(60).then((d: TradingDaysResponse) => {
+    api.getTradingDays(250).then((d: TradingDaysResponse) => {
       setAvailableDays(d.dates);
       if (d.latest) setTradingDay(d.latest);
       else if (d.dates.length) setTradingDay(d.dates[0]);

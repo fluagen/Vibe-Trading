@@ -157,8 +157,16 @@ class DataLoader:
         # only expose offset-from-latest, so we page back through history
         # until the first row of the page is older than start_date.
         if interval == "1D":
-            df = client.get_k_data(code=symbol, start_date=start_date, end_date=end_date)
-            return self._normalize_daily(df)
+            # mootdx get_k_data filters with data.date < end_date (exclusive),
+            # which drops the end_date bar.  Request one extra day and clip
+            # back so the returned DataFrame includes end_date.
+            end_dt = pd.Timestamp(end_date)
+            fetch_end = (end_dt + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            df = client.get_k_data(code=symbol, start_date=start_date, end_date=fetch_end)
+            result = self._normalize_daily(df)
+            if result is not None and not result.empty:
+                result = result[result.index <= end_dt]
+            return result if (result is not None and not result.empty) else None
 
         freq = _DAILY_FREQ.get(interval) or _INTRADAY_FREQ[interval]
         return self._fetch_bars_paginated(client, symbol, freq, start_date, end_date)
