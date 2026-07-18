@@ -38,7 +38,7 @@ def _make_ohlcv(
 # ---------------------------------------------------------------------------
 
 class TestBottomSignalKInvertedHammer:
-    """止跌K = 倒锤线 + close > prev bearish body 1/2 + volume > 1.5x prev."""
+    """止跌K 倒垂: inverted hammer + high > prev_mid + volume surge (v3)."""
 
     def test_detects_inverted_hammer_as_bottom_signal_k(self):
         """A valid inverted hammer with volume surge and close condition
@@ -72,13 +72,15 @@ class TestBottomSignalKInvertedHammer:
 
         assert bool(result.iloc[1]["bottom_signal_k"]) is False
 
-    def test_rejects_when_close_below_prev_midpoint(self):
-        """Close below prev bearish body midpoint → not 止跌K."""
+    def test_rejects_when_high_below_prev_mid(self):
+        """High below prev mid → not 倒垂 止跌K (v3: high > prev_mid required)."""
+        # Day 1: bearish, prev_mid = 95
+        # Day 2: inverted hammer but high=94 < 95 (prev_mid)
         df = _make_ohlcv(
             opens=[100.0, 97.0],
-            highs=[102.0, 110.0],
-            lows=[90.0, 96.0],
-            closes=[90.0, 94.0],
+            highs=[102.0, 94.0],
+            lows=[90.0, 91.0],
+            closes=[90.0, 93.0],
             volumes=[10000, 16000],
         )
         detector = UpTrendStructure()
@@ -87,12 +89,14 @@ class TestBottomSignalKInvertedHammer:
         assert bool(result.iloc[1]["bottom_signal_k"]) is False
 
     def test_rejects_when_not_inverted_hammer(self):
-        """Regular bullish candle without long upper shadow → not 止跌K."""
+        """Not an inverted hammer AND not a 反包线 → not 止跌K."""
+        # Day 2: bullish but close below threshold (93 < prev_mid=95)
+        # and no long upper shadow → fails both 倒垂 and 反包线
         df = _make_ohlcv(
             opens=[100.0, 97.0],
             highs=[102.0, 100.0],
             lows=[90.0, 96.0],
-            closes=[90.0, 99.0],
+            closes=[90.0, 93.0],
             volumes=[10000, 16000],
         )
         detector = UpTrendStructure()
@@ -102,24 +106,22 @@ class TestBottomSignalKInvertedHammer:
 
 
 # ---------------------------------------------------------------------------
-# Behavior #2: 大阳线 detected as 止跌K
+# Behavior #2: 反包线 detected as 止跌K
 # ---------------------------------------------------------------------------
 
-class TestBottomSignalKBigBullish:
-    """止跌K = 大阳线 + close > prev bearish body 1/2 + volume > 1.5x prev."""
+class TestBottomSignalKFanbao:
+    """止跌K 反包线: prev bearish + bullish + close > threshold + volume surge."""
 
-    def test_detects_big_bullish_as_bottom_signal_k(self):
-        """Big bullish candle (body > 60% range) with volume and close
-        conditions should set bottom_signal_k = True."""
-        # Day 1: bearish, open=100 close=90, body=10, midpoint=95
-        # Day 2: big bullish, open=95 close=105, body=10, range=12
-        #         body/range=0.83 > 0.6, close=105 > 95
-        #         vol=16000 > 1.5x 10000
+    def test_detects_fanbao_as_bottom_signal_k(self):
+        """Bullish close above threshold with volume surge → 反包线 止跌K."""
+        # Day 1: bearish, open=100 close=90, prev_mid=95
+        # Day 2: bullish, open=92 close=98, close > threshold(=95 at default 0.5)
+        #         vol=16000 > 1.2x 10000
         df = _make_ohlcv(
-            opens=[100.0, 95.0],
-            highs=[102.0, 108.0],
-            lows=[90.0, 93.0],
-            closes=[90.0, 105.0],
+            opens=[100.0, 92.0],
+            highs=[102.0, 100.0],
+            lows=[90.0, 91.0],
+            closes=[90.0, 98.0],
             volumes=[10000, 16000],
         )
         detector = UpTrendStructure()
@@ -127,14 +129,45 @@ class TestBottomSignalKBigBullish:
 
         assert bool(result.iloc[1]["bottom_signal_k"]) is True
 
-    def test_rejects_when_body_too_small(self):
-        """Bullish candle with body < 60% range → not 止跌K."""
+    def test_rejects_when_not_bullish(self):
+        """Bearish candle → not 反包线."""
+        # Day 2: bearish (close=94 < open=96)
         df = _make_ohlcv(
-            opens=[100.0, 100.0],
-            highs=[102.0, 110.0],
-            lows=[90.0, 95.0],
-            closes=[90.0, 103.0],
+            opens=[100.0, 96.0],
+            highs=[102.0, 98.0],
+            lows=[90.0, 92.0],
+            closes=[90.0, 94.0],
             volumes=[10000, 16000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+
+        assert bool(result.iloc[1]["bottom_signal_k"]) is False
+
+    def test_rejects_when_close_below_threshold(self):
+        """Close below threshold → not 反包线."""
+        # Day 1: bearish, prev_mid=95 (threshold at default 0.5)
+        # Day 2: close=93 < 95
+        df = _make_ohlcv(
+            opens=[100.0, 96.0],
+            highs=[102.0, 98.0],
+            lows=[90.0, 91.0],
+            closes=[90.0, 93.0],
+            volumes=[10000, 16000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+
+        assert bool(result.iloc[1]["bottom_signal_k"]) is False
+
+    def test_rejects_when_volume_too_low(self):
+        """Volume below threshold → not 反包线."""
+        df = _make_ohlcv(
+            opens=[100.0, 97.0],
+            highs=[102.0, 100.0],
+            lows=[90.0, 91.0],
+            closes=[90.0, 98.0],
+            volumes=[10000, 11500],
         )
         detector = UpTrendStructure()
         result = detector.compute(df)

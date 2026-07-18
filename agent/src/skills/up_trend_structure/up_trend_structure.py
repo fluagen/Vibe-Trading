@@ -86,36 +86,42 @@ class UpTrendStructure:
     def _detect_bottom_signal_k(self, df: pd.DataFrame) -> pd.Series:
         """Detect 止跌K (bottom signal K-line).
 
-        Pattern 1 — native: inverted hammer / big bullish + vol surge.
-        Pattern 2 — two-day build: D1 bullish+volup, D2 bullish+volup+close>mid → D2 is 止跌K.
+        v3: three patterns with priority 倒垂 > 反包线 > 两日筑底.
+        Pattern 1 — 倒垂: inverted hammer + high > prev_mid + vol surge.
+        Pattern 2 — 反包线: prev bearish + bullish + close > threshold + vol surge.
+        Pattern 3 — 两日筑底: D0 bearish → D1 bullish (not P1/P2) → D2 bullish+vol↑+close>D0_mid.
         """
         o, h, l, c, v = df["open"], df["high"], df["low"], df["close"], df["volume"]
 
         prev_bearish = c.shift(1) < o.shift(1)
         prev_mid = (o.shift(1) + c.shift(1)) / 2
 
-        # Pattern 1: native 止跌K
+        # Pattern 1: 倒垂 — inverted hammer with high above prev_mid
         bd = _body(o, c)
         us = _upper_shadow(o, c, h)
         ls = _lower_shadow(o, c, l)
         inv_hammer = (us >= self.inv_hammer_shadow_ratio * bd) & (ls < bd) & (bd > 0)
-        rng = _range(h, l)
-        safe_rng = rng.replace(0, float("nan"))
-        big_bullish = (bd / safe_rng > self.big_bull_body_ratio) & (c > o) & (bd > 0)
-        native_bsk = prev_bearish & (inv_hammer | big_bullish) & (c > prev_mid) & (v > v.shift(1) * self.volume_surge_ratio)
+        p1_daochui = prev_bearish & inv_hammer & (h > prev_mid) & (v > v.shift(1) * self.volume_surge_ratio)
 
-        # Pattern 2: two-day volume build
-        # D0 bearish → D1 bullish+vol↑(not native bsk) → D2 bullish+vol↑+close>D0_mid → D2 is 止跌K
+        # Pattern 2: 反包线 — bullish close above threshold (default threshold = prev_mid)
+        threshold = c.shift(1) + (o.shift(1) - c.shift(1)) * self.close_above_prev_mid
+        is_bullish = c > o
+        p2_fanbao = prev_bearish & is_bullish & (c > threshold) & (v > v.shift(1) * self.volume_surge_ratio)
+
+        # Pattern 3: 两日筑底
+        # D0 bearish → D1 bullish (NOT P1 AND NOT P2) → D2 bullish+vol↑+close>D0_mid → D2 is 止跌K
         d0_bearish = c.shift(2) < o.shift(2)
         d0_mid = (o.shift(2) + c.shift(2)) / 2
         d1_bull = c.shift(1) > o.shift(1)
-        d1_vol = v.shift(1) > v.shift(2)
+        d1_is_bsk = p1_daochui.shift(1).fillna(False) | p2_fanbao.shift(1).fillna(False)
         d2_bull = c > o
         d2_vol = v > v.shift(1)
         d2_close = c > d0_mid
-        two_day = d0_bearish & d1_bull & d1_vol & ~native_bsk.shift(1).fillna(False) & d2_bull & d2_vol & d2_close
+        p3_two_day = d0_bearish & d1_bull & ~d1_is_bsk & d2_bull & d2_vol & d2_close
 
-        return (native_bsk | two_day).fillna(False)
+        # Union with priority: 倒垂 > 反包线 > 两日筑底
+        result = p1_daochui | p2_fanbao | p3_two_day
+        return result.fillna(False)
 
     def _detect_confirm_k(self, df: pd.DataFrame) -> pd.Series:
         """Detect 证伪K (confirmation K-line).
