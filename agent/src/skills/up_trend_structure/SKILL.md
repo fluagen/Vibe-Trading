@@ -48,7 +48,7 @@ OHLCV → UpTrendStructure.compute() → structure states
 
 ### 止跌K (v3, three patterns, priority: 倒垂 > 反包线 > 两日筑底)
 1. **倒垂**: 前日阴线 + 倒锤子(上影≥ratio×实体, 下影<实体) + 最高价>前日中点 + 放量
-2. **反包线**: 前日阴线 + 当日收阳 + 收盘>threshold(默认前日中点) + 放量
+2. **反包线**: 前日阴线 + 当日收阳 + 实体/振幅>big_bull_body_ratio(default 0.4) + 收盘>threshold(默认前日中点) + 放量
 3. **两日筑底**: D0阴 → D1阳(非倒垂且非反包线) → D2阳+放量+C>D0中点, D2为止跌K
 
 ## States (v2)
@@ -68,7 +68,7 @@ OHLCV → UpTrendStructure.compute() → structure states
 |-----------|---------|-------------|
 | `up_phase_min_bars` | 2 | Consecutive 价涨量增 days |
 | `volume_surge_ratio` | 1.2 | 止跌K volume surge ratio |
-| `big_bull_body_ratio` | 0.6 | Reserved, not used in current 止跌K |
+| `big_bull_body_ratio` | 0.4 | 反包线 body/range minimum ratio |
 | `inv_hammer_shadow_ratio` | 1.1 | 倒垂 upper shadow / body ratio |
 | `close_above_prev_mid` | 0.5 | 反包线 close threshold: `threshold = prev_close + (prev_open-prev_close) * ratio` |
 | `stop_loss_pct` | 0.03 | Unconditional stop loss |

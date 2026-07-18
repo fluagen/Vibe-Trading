@@ -174,6 +174,22 @@ class TestBottomSignalKFanbao:
 
         assert bool(result.iloc[1]["bottom_signal_k"]) is False
 
+    def test_rejects_when_body_too_small(self):
+        """Body/range < big_bull_body_ratio → not 反包线 (doji filter)."""
+        # Day 2: bullish, close > threshold, vol surge, BUT body/range too small
+        # body = 1, range = 10, ratio = 0.1 < 0.4
+        df = _make_ohlcv(
+            opens=[100.0, 97.0],
+            highs=[102.0, 105.0],
+            lows=[90.0, 95.0],
+            closes=[90.0, 98.0],
+            volumes=[10000, 16000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+
+        assert bool(result.iloc[1]["bottom_signal_k"]) is False
+
 
 # ---------------------------------------------------------------------------
 # Behavior #3: 证伪K detection

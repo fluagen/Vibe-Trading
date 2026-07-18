@@ -38,7 +38,7 @@
 | 形态 | 条件 |
 |------|------|
 | **形态一：倒垂** | 前日阴线 + 倒锤子(上影≥`inv_hammer_shadow_ratio`×实体、下影<实体) + 最高价>`prev_mid` + 放量>前日×`volume_surge_ratio` |
-| **形态二：反包线** | 前日阴线 + 当日收阳 + 收盘>`prev_close + (prev_open-prev_close)×close_above_prev_mid` + 放量>前日×`volume_surge_ratio` |
+| **形态二：反包线** | 前日阴线 + 当日收阳 + 实体/振幅>`big_bull_body_ratio` + 收盘>`prev_close + (prev_open-prev_close)×close_above_prev_mid` + 放量>前日×`volume_surge_ratio` |
 | **形态三：两日筑底** | D0阴线 → D1阳线(非倒垂、非反包线) → D2阳线放量+收盘>D0中点，D2为止跌K |
 
 > `prev_mid = (prev_open + prev_close) / 2`，即前日实体中点。倒垂使用 `high > prev_mid`（硬编码），反包线使用 `close > threshold`（受 `close_above_prev_mid` 控制，默认 0.5 时 threshold = prev_mid）。v3 移除 v2 中 D1 放量要求。
@@ -154,7 +154,7 @@ close<MA(10) ──────────────────────�
 | `up_phase_min_bars` | 2 | 价涨量增连续天数要求 |
 | `volume_surge_ratio` | 1.2 | 止跌K 成交量放大倍数 |
 | `inv_hammer_shadow_ratio` | 1.1 | 倒垂线上影/实体倍数（形态一） |
-| `big_bull_body_ratio` | 0.6 | 保留参数，当前止跌K未使用，后续可能新增形态 |
+| `big_bull_body_ratio` | 0.4 | 反包线实体/振幅最小比例，过滤 doji 假阳线 |
 | `close_above_prev_mid` | 0.5 | 反包线收盘阈值：`threshold = prev_close + (prev_open-prev_close) × 该值`（形态二），默认 0.5 等价于前日实体中点 |
 | `stop_loss_pct` | 0.03 | 无条件止损比例 |
 | `take_profit_pct` | 0.30 | 第一档止盈盈利比例 |

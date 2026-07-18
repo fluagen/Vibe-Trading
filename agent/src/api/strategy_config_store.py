@@ -21,7 +21,7 @@ _DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     "up_trend_structure": {
         "up_phase_min_bars": 2,
         "volume_surge_ratio": 1.2,
-        "big_bull_body_ratio": 0.6,
+        "big_bull_body_ratio": 0.4,
         "inv_hammer_shadow_ratio": 1.1,
         "close_above_prev_mid": 0.5,
         "stop_loss_pct": 0.03,

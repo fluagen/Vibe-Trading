@@ -51,7 +51,7 @@ class UpTrendStructure:
         self,
         up_phase_min_bars: int = 2,
         volume_surge_ratio: float = 1.2,
-        big_bull_body_ratio: float = 0.6,
+        big_bull_body_ratio: float = 0.4,
         inv_hammer_shadow_ratio: float = 1.1,
         close_above_prev_mid: float = 0.5,
         divergence_repair_bars: int = 1,
@@ -104,9 +104,13 @@ class UpTrendStructure:
         p1_daochui = prev_bearish & inv_hammer & (h > prev_mid) & (v > v.shift(1) * self.volume_surge_ratio)
 
         # Pattern 2: 反包线 — bullish close above threshold (default threshold = prev_mid)
+        #   + body/range > big_bull_body_ratio (filters doji false-bullish candles)
         threshold = c.shift(1) + (o.shift(1) - c.shift(1)) * self.close_above_prev_mid
         is_bullish = c > o
-        p2_fanbao = prev_bearish & is_bullish & (c > threshold) & (v > v.shift(1) * self.volume_surge_ratio)
+        rng = _range(h, l)
+        safe_rng = rng.replace(0, float("nan"))
+        body_ratio_ok = (bd / safe_rng) > self.big_bull_body_ratio
+        p2_fanbao = prev_bearish & is_bullish & body_ratio_ok & (c > threshold) & (v > v.shift(1) * self.volume_surge_ratio)
 
         # Pattern 3: 两日筑底
         # D0 bearish → D1 bullish (NOT P1 AND NOT P2) → D2 bullish+vol↑+close>D0_mid → D2 is 止跌K

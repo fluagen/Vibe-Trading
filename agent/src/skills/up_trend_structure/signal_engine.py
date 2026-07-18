@@ -21,7 +21,7 @@ class SignalEngine:
         self,
         up_phase_min_bars: int = 2,
         volume_surge_ratio: float = 1.2,
-        big_bull_body_ratio: float = 0.6,
+        big_bull_body_ratio: float = 0.4,
         inv_hammer_shadow_ratio: float = 1.2,
         close_above_prev_mid: float = 0.5,
         stop_loss_pct: float = 0.03,
