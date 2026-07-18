@@ -78,21 +78,23 @@
 
 ### 状态机
 
-6 个状态，13 条转移规则：
+6 个状态，14 条转移规则。**pivot_low 仅在进入 `up_phase` 时设置**：`forming → up_phase` 时取 forming bar 的 low，`pullback_end → up_phase` 时取止跌K 的 low。
 
 | 当前状态 | 条件 | 新状态 | 动作 |
 |----------|------|--------|------|
-| `no_structure` | 价涨量增 | `forming` | 起涨点=当前low |
-| `forming` | 价涨量增 | `up_phase` | — |
+| `no_structure` | 价涨量增 | `forming` | 记录 forming_low=当前low |
+| `forming` | 价涨量增 | `up_phase` | pivot = forming_low |
 | `forming` | 非价涨量增 | `no_structure` | — |
-| `pullback_end` | 证伪K | `up_phase` | — |
-| `pullback_end` | 非证伪K | `pullback` | — |
 | `up_phase` | 背离 or 价跌量缩 | (挂起) | 记录触发日close/vol |
 | `up_phase` | 挂起次日 + 补量成功 | `up_phase` | 延续 |
 | `up_phase` | 挂起次日 + 补量失败 | `pullback` | 上涨阶段结束 |
 | `up_phase` | 价涨量增 | `up_phase` | 延续 |
-| `pullback` | 止跌K | `pullback_end` | 新起涨点=止跌K low |
-| `*` (除no_structure) | `low < 起涨点` | `breakdown` | — |
+| `pullback` | 止跌K | `pullback_end` | 记录 pullback_end_low=止跌K low, pullback_end_close=止跌K close |
+| `pullback_end` | 证伪K（条件1：止跌K次日 + 收阳或close>止跌K close） | `up_phase` | pivot = pullback_end_low |
+| `pullback_end` | 条件2：持续期间 收阳 + close > pullback_end_close | `up_phase` | pivot = pullback_end_low |
+| `pullback_end` | `low < pullback_end_low` | `pullback` | 止跌K 低点被跌破 |
+| `pullback_end` | 其他 | `pullback_end` | 继续等待 |
+| `*` (除no_structure) | `low < pivot` | `breakdown` | — |
 | `breakdown` | 立即 | `no_structure` | — |
 
 ### 信号规则
@@ -107,7 +109,7 @@
 | 2 | **浮动亏损超限** | `(close - avg_entry) / avg_entry < -stop_loss_pct` | 默认 -3%，独立于 pivot |
 | 3 | **进入 pullback** | `state == pullback` 且 prev 为 `up_phase` | up_phase 中背离/价跌量缩未修复 → 状态转 pullback → 平仓 |
 
-> 止损条件 3 仅适用于从 up_phase 进入 pullback（背离/价跌量缩补量失败）。止跌K 入场后即使次日无确认K 回到 pullback，**不触发此退出**，继续持仓等待止跌或止损。
+> 止损条件 3 仅适用于从 up_phase 进入 pullback（背离/价跌量缩补量失败）。`pullback_end` 状态不会因"非证伪K"回到 pullback — 只有 `low < pullback_end_low` 才退回 pullback，且不触发此退出。
 
 #### 止盈（阶梯减仓）
 

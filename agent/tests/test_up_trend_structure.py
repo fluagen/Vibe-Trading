@@ -582,3 +582,84 @@ class TestStateMachineV2Entry:
     def test_up_phase_min_bars_default_2(self):
         detector = UpTrendStructure()
         assert detector.up_phase_min_bars == 2
+
+
+# ---------------------------------------------------------------------------
+# Behavior #11: Extended pullback_end confirmation (condition 2)
+# ---------------------------------------------------------------------------
+
+
+class TestPullbackEndExtendedConfirm:
+    """v3: pullback_end persists; condition-2 triggers after condition-1 fails."""
+
+    def test_condition2_triggers_after_condition1_fails(self):
+        """止跌K 次日 not confirm K, 第三日 收阳+close>止跌K close → up_phase."""
+        # Day 1-3: 价涨量增 → up_phase (pivot=100)
+        # Day 4: divergence, Day 5: unrepaired → pullback
+        # Day 6: 止跌K (反包线, close=107, low=101) → pullback_end
+        # Day 7: bearish, close=104 < 107 → NOT confirm K (condition 1 fails)
+        # Day 8: bullish + close=108 > 107 → condition 2 triggers → up_phase
+        df = _make_ohlcv(
+            opens=[100.0, 101.0, 105.0, 107.0, 105.0, 99.0, 105.0, 106.0],
+            highs=[102.0, 108.0, 108.0, 109.0, 106.0, 112.0, 106.0, 110.0],
+            lows=[98.0, 100.0, 104.0, 106.0, 103.0, 101.0, 102.0, 105.0],
+            closes=[101.0, 106.0, 107.0, 108.0, 104.0, 107.0, 104.0, 108.0],
+            volumes=[10000, 12000, 13000, 9000, 8000, 16000, 7000, 10000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+
+        # Day 5: pullback
+        assert result.iloc[4]["state"] == "pullback"
+        # Day 6 (idx 5): 止跌K → pullback_end
+        assert result.iloc[5]["state"] == "pullback_end"
+        assert bool(result.iloc[5]["bottom_signal_k"]) is True
+        # Day 7 (idx 6): bearish, close=104 < 止跌K close=107 → not ck, stays
+        assert result.iloc[6]["state"] == "pullback_end"
+        assert bool(result.iloc[6]["confirm_k"]) is False
+        # Day 8 (idx 7): bullish + close=108 > 107 → condition 2 → up_phase
+        assert result.iloc[7]["state"] == "up_phase"
+        assert result.iloc[7]["pivot_low"] == 101.0  # 止跌K low
+
+    def test_stays_in_pullback_end_when_condition2_not_met(self):
+        """Neither bullish nor close > pullback_end_close → stay pullback_end."""
+        # Day 6: 止跌K (close=107, low=101) → pullback_end
+        # Day 7: bearish, close=105 < 107 → not ck
+        # Day 8: bearish, close=106 < 107 → not condition 2 either
+        df = _make_ohlcv(
+            opens=[100.0, 101.0, 105.0, 107.0, 105.0, 99.0, 105.0, 107.0],
+            highs=[102.0, 108.0, 108.0, 109.0, 106.0, 112.0, 106.0, 108.0],
+            lows=[98.0, 100.0, 104.0, 106.0, 103.0, 101.0, 103.0, 104.0],
+            closes=[101.0, 106.0, 107.0, 108.0, 104.0, 107.0, 105.0, 106.0],
+            volumes=[10000, 12000, 13000, 9000, 8000, 16000, 7000, 8000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+
+        assert result.iloc[5]["state"] == "pullback_end"
+        # Day 7: bearish → not ck
+        assert result.iloc[6]["state"] == "pullback_end"
+        # Day 8: bearish, close=106 < 107 → not condition 2 → stays
+        assert result.iloc[7]["state"] == "pullback_end"
+
+    def test_condition2_requires_bullish(self):
+        """close > pullback_end_close but bearish → NOT condition 2."""
+        # Day 6: 止跌K (close=107) → pullback_end
+        # Day 7: bearish, close=106 <= 107 → condition 1 fails
+        # Day 8: bearish (open=110 > close=108), close=108 > 107, but not bullish
+        df = _make_ohlcv(
+            opens=[100.0, 101.0, 105.0, 107.0, 105.0, 99.0, 109.0, 110.0],
+            highs=[102.0, 108.0, 108.0, 109.0, 106.0, 112.0, 110.0, 111.0],
+            lows=[98.0, 100.0, 104.0, 106.0, 103.0, 101.0, 105.0, 107.0],
+            closes=[101.0, 106.0, 107.0, 108.0, 104.0, 107.0, 106.0, 108.0],
+            volumes=[10000, 12000, 13000, 9000, 8000, 16000, 7000, 8000],
+        )
+        detector = UpTrendStructure()
+        result = detector.compute(df)
+
+        assert result.iloc[5]["state"] == "pullback_end"
+        # Day 7 (idx 6): bearish, close=106 < 107 → condition 1 fails
+        assert result.iloc[6]["state"] == "pullback_end"
+        # Day 8 (idx 7): bearish (open=110 > close=108), close=108 > 107
+        #   condition 2 requires bullish → fails → stays
+        assert result.iloc[7]["state"] == "pullback_end"

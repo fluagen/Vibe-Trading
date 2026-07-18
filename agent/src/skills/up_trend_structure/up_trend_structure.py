@@ -157,7 +157,7 @@ class UpTrendStructure:
         return divergence.fillna(False)
 
     # -------------------------------------------------------------------
-    # State machine (v2)
+    # State machine (v3)
     # -------------------------------------------------------------------
 
     def _compute_states(
@@ -171,10 +171,10 @@ class UpTrendStructure:
     ) -> Tuple[pd.Series, pd.Series]:
         """Compute state and pivot_low for each bar.
 
-        v2 state transitions:
+        v3 state transitions:
 
-        no_structure + 价涨量增 → forming (pivot = current low)
-          forming + 价涨量增 → up_phase
+        no_structure + 价涨量增 → forming (pivot = forming low)
+          forming + 价涨量增 → up_phase (pivot = forming low)
           forming + !价涨量增 → no_structure
 
         up_phase + 价涨量增 → up_phase (continue)
@@ -182,9 +182,10 @@ class UpTrendStructure:
           repair next day → up_phase (continue)
           no repair next day → pullback
 
-        pullback + 止跌K → pullback_end (new pivot)
-          pullback_end + 证伪K → up_phase
-          pullback_end + !证伪K → pullback
+        pullback + 止跌K → pullback_end (pullback_end_low = 止跌K low)
+          pullback_end + 证伪K → up_phase (pivot = pullback_end_low)
+          pullback_end + low < pullback_end_low → pullback
+          pullback_end + otherwise → stay in pullback_end
 
         any(!no_structure) + low < pivot → breakdown → no_structure
         """
@@ -195,9 +196,11 @@ class UpTrendStructure:
         current_state = "no_structure"
         current_pivot = float("nan")
 
-        # Pivot saved before entering pullback_end, so it can be restored
-        # if pullback_end fails to transition to up_phase (no confirm K).
-        pre_bsk_pivot = float("nan")
+        # Low and close of the 止跌K that triggered pullback_end entry.
+        # pullback_end_low: new pivot when → up_phase; floor for staying.
+        # pullback_end_close: condition-2 confirm threshold (收阳 + close > this).
+        pullback_end_low = float("nan")
+        pullback_end_close = float("nan")
 
         # Pending exit condition awaiting next-day repair (补量)
         pending_exit = None  # "divergence" or "price_volume_down"
@@ -219,6 +222,8 @@ class UpTrendStructure:
                 if low_i < current_pivot:
                     current_state = "breakdown"
                     current_pivot = float("nan")
+                    pullback_end_low = float("nan")
+                    pullback_end_close = float("nan")
                     pending_exit = None
 
             # --- breakdown → no_structure (immediate) ---
@@ -235,6 +240,7 @@ class UpTrendStructure:
             elif current_state == "forming":
                 if is_puvu:
                     current_state = "up_phase"
+                    # pivot stays as forming bar's low (set on entry)
                 else:
                     current_state = "no_structure"
                     current_pivot = float("nan")
@@ -264,19 +270,31 @@ class UpTrendStructure:
             # --- pullback ---
             elif current_state == "pullback":
                 if is_bsk:
-                    pre_bsk_pivot = current_pivot
+                    pullback_end_low = low_i
+                    pullback_end_close = close_i
                     current_state = "pullback_end"
-                    current_pivot = low_i
+                    # pivot unchanged — only set when entering up_phase
 
             # --- pullback_end ---
             elif current_state == "pullback_end":
+                # Condition 1: 证伪K on the bar right after 止跌K
+                # Condition 2: extended — 收阳 + close > 止跌K close
+                is_bullish = close_i > df["open"].iloc[i]
                 if is_ck:
                     current_state = "up_phase"
-                    pre_bsk_pivot = float("nan")
-                else:
+                    current_pivot = pullback_end_low
+                    pullback_end_low = float("nan")
+                    pullback_end_close = float("nan")
+                elif is_bullish and close_i > pullback_end_close:
+                    current_state = "up_phase"
+                    current_pivot = pullback_end_low
+                    pullback_end_low = float("nan")
+                    pullback_end_close = float("nan")
+                elif low_i < pullback_end_low:
                     current_state = "pullback"
-                    current_pivot = pre_bsk_pivot
-                    pre_bsk_pivot = float("nan")
+                    pullback_end_low = float("nan")
+                    pullback_end_close = float("nan")
+                # else: stay in pullback_end, wait for confirm or breakdown
 
             states[i] = current_state
             pivots[i] = current_pivot
