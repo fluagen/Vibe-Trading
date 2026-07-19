@@ -157,11 +157,20 @@ class DataLoader:
         # only expose offset-from-latest, so we page back through history
         # until the first row of the page is older than start_date.
         if interval == "1D":
-            # mootdx get_k_data filters with data.date < end_date (exclusive),
-            # which drops the end_date bar.  Request one extra day and clip
-            # back so the returned DataFrame includes end_date.
+            # mootdx get_k_data has two quirks:
+            # 1. It filters with data.date < end_date (exclusive), which
+            #    would drop the end_date bar.
+            # 2. It computes a ``first`` offset from datetime.now() with a
+            #    rough heuristic to skip non-trading days.  When end_date is
+            #    close to today that offset can skip bars we actually need.
+            #
+            # Fix both by pushing fetch_end at least 3 days past today so
+            # the offset stays at 0, and relying on our own precise clip.
             end_dt = pd.Timestamp(end_date)
-            fetch_end = (end_dt + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            fetch_end = max(
+                end_dt + pd.Timedelta(days=1),
+                pd.Timestamp.now().normalize() + pd.Timedelta(days=3),
+            ).strftime("%Y-%m-%d")
             df = client.get_k_data(code=symbol, start_date=start_date, end_date=fetch_end)
             result = self._normalize_daily(df)
             if result is not None and not result.empty:
