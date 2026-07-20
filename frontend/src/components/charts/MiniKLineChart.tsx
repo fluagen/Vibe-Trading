@@ -45,7 +45,8 @@ export function MiniKLineChart({ bars, signals, width = 200, height = 60, onClic
       const sp = sm.get(b.date);
       if (!sp) return [];
       const t = STYLE[sp.type] ?? { c: "#888", s: "circle" };
-      return [{ x: pad.l + i * (cw / bars.length), y: sy(b.close), t, lbl: LAB[sp.type] ?? "" }];
+      const lbl = sp.entry_label || LAB[sp.type] || "";
+      return [{ x: pad.l + i * (cw / bars.length), y: sy(b.close), t, lbl }];
     });
     return { shapes, markers };
   }, [bars, signals, width, height]);

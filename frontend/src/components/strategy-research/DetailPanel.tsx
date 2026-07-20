@@ -39,8 +39,8 @@ function signalReason(sig: { type: string; description?: string }): string {
   return "";
 }
 
-function signalAction(sig: { type: string; signal_value: number }): string {
-  if (sig.type === "entry_trial") return `入场(${sig.signal_value.toFixed(2)})`;
+function signalAction(sig: { type: string; signal_value: number; entry_label?: string }): string {
+  if (sig.type === "entry_trial") return sig.entry_label || `入场(${sig.signal_value.toFixed(2)})`;
   if (sig.type === "entry_confirm") return `加仓(${sig.signal_value.toFixed(2)})`;
   if (sig.type === "take_profit") return `止盈(x${sig.signal_value.toFixed(2)})`;
   if (sig.type === "exit") return "退出(-1.0)";

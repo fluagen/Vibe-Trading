@@ -158,7 +158,7 @@ class TestFminer001:
                 open_arr[:, col_idx], high_arr[:, col_idx], low_arr[:, col_idx],
                 close_arr[:, col_idx], volume_arr[:, col_idx],
             )
-            ref = detector._detect_bottom_signal_k(single)
+            ref = detector._detect_bottom_signal_k(single)[0]
 
             factor_col = factor_result[code]
             for i in range(n_rows):

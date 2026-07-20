@@ -155,7 +155,7 @@ def run_single_stock_backtest(
     metrics = _evaluate_performance(df, sig_series)
 
     # 4. Build signal point list (for frontend chart markers).
-    signal_points = _build_signal_points(df, sig_series)
+    signal_points = _build_signal_points(df, sig_series, states)
 
     # 5. Build OHLCV snapshot (last ~100 bars for mini chart).
     ohlcv_snapshot = _build_ohlcv_snapshot(df, states, signal_points)
@@ -425,6 +425,7 @@ def _compute_daily_position(signals: pd.Series) -> pd.Series:
 def _build_signal_points(
     df: pd.DataFrame,
     signals: pd.Series,
+    states: pd.DataFrame | None = None,
 ) -> list[dict[str, Any]]:
     """Extract signal change points for frontend chart markers."""
     points: list[dict[str, Any]] = []
@@ -449,12 +450,25 @@ def _build_signal_points(
         except (KeyError, TypeError):
             price = 0.0
 
-        points.append({
+        pt = {
             "date": str(idx)[:10],
             "type": stype,
             "price": round(price, 2),
             "signal_value": round(sig, 2),
-        })
+        }
+
+        # Attach entry_label for 止跌K signals with known pattern
+        if stype == "entry_trial" and states is not None and not states.empty:
+            pattern = ""
+            try:
+                if "bsk_pattern" in states.columns:
+                    pattern = str(states.loc[idx, "bsk_pattern"])
+            except (KeyError, TypeError):
+                pass
+            if pattern:
+                pt["entry_label"] = f"入({pattern})"
+
+        points.append(pt)
     return points
 
 

@@ -83,13 +83,17 @@ class UpTrendStructure:
         result = price_down & volume_down
         return result.fillna(False)
 
-    def _detect_bottom_signal_k(self, df: pd.DataFrame) -> pd.Series:
+    def _detect_bottom_signal_k(self, df: pd.DataFrame) -> tuple:
         """Detect 止跌K (bottom signal K-line).
 
         v3: three patterns with priority 倒垂 > 反包线 > 两日筑底.
         Pattern 1 — 倒垂: inverted hammer + high > prev_mid + vol surge.
         Pattern 2 — 反包线: prev bearish + bullish + close > threshold + vol surge.
         Pattern 3 — 两日筑底: D0 bearish → D1 bullish (not P1/P2) → D2 bullish+vol↑+close>D0_mid.
+
+        Returns:
+            (bottom_signal_k, p1_daochui, p2_fanbao, p3_two_day) — the union
+            boolean Series plus the three individual pattern Series (unfilled).
         """
         o, h, l, c, v = df["open"], df["high"], df["low"], df["close"], df["volume"]
 
@@ -125,7 +129,7 @@ class UpTrendStructure:
 
         # Union with priority: 倒垂 > 反包线 > 两日筑底
         result = p1_daochui | p2_fanbao | p3_two_day
-        return result.fillna(False)
+        return result.fillna(False), p1_daochui.fillna(False), p2_fanbao.fillna(False), p3_two_day.fillna(False)
 
     def _detect_confirm_k(self, df: pd.DataFrame) -> pd.Series:
         """Detect 证伪K (confirmation K-line).
@@ -136,7 +140,7 @@ class UpTrendStructure:
           - Volume not considered
         """
         o, c = df["open"], df["close"]
-        prev_bsk = self._detect_bottom_signal_k(df).shift(1).fillna(False)
+        prev_bsk = self._detect_bottom_signal_k(df)[0].shift(1).fillna(False)
 
         is_bullish = c > o
         close_above = c > c.shift(1)
@@ -323,7 +327,13 @@ class UpTrendStructure:
         result = pd.DataFrame(index=df.index)
         result["price_up_volume_up"] = self._detect_price_up_volume_up(df)
         result["price_volume_down"] = self._detect_price_volume_down(df)
-        result["bottom_signal_k"] = self._detect_bottom_signal_k(df)
+        bsk_all, p1, p2, p3 = self._detect_bottom_signal_k(df)
+        result["bottom_signal_k"] = bsk_all
+        # Record which sub-pattern triggered (priority: 倒垂 > 反包 > 筑底)
+        result["bsk_pattern"] = ""
+        result.loc[p1, "bsk_pattern"] = "倒垂"
+        result.loc[p2 & ~p1, "bsk_pattern"] = "反包"
+        result.loc[p3 & ~p1 & ~p2, "bsk_pattern"] = "筑底"
         result["confirm_k"] = self._detect_confirm_k(df)
         result["divergence"] = self._detect_divergence(df)
         result["pullback_depth_pct"] = float("nan")

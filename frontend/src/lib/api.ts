@@ -1162,6 +1162,7 @@ export interface SignalPoint {
   type: string;
   price: number;
   signal_value: number;
+  entry_label?: string;  // 入场形态标签，如 "入(倒垂)"、"入(反包)"、"入(筑底)"
 }
 
 export interface OHLCSnapshotBar {
