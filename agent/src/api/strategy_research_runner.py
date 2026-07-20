@@ -457,7 +457,7 @@ def _build_signal_points(
             "signal_value": round(sig, 2),
         }
 
-        # Attach entry_label for 止跌K signals with known pattern
+        # Attach entry_label / entry_pattern for 止跌K signals with known pattern
         if stype == "entry_trial" and states is not None and not states.empty:
             pattern = ""
             try:
@@ -467,6 +467,7 @@ def _build_signal_points(
                 pass
             if pattern:
                 pt["entry_label"] = f"入({pattern})"
+                pt["entry_pattern"] = pattern
 
         points.append(pt)
     return points
@@ -524,6 +525,17 @@ def _build_trade_records(
             "price": round(price, 2),
             "signal_value": round(sig, 2),
         })
+
+        # Attach entry_pattern for 止跌K entry_trial signals
+        if stype == "entry_trial" and states is not None and not states.empty:
+            pattern = ""
+            try:
+                if "bsk_pattern" in states.columns:
+                    pattern = str(states.loc[idx, "bsk_pattern"])
+            except (KeyError, TypeError):
+                pass
+            if pattern:
+                events[-1]["entry_pattern"] = pattern
 
     # Group events into trades: entry events → exit event.
     trades: list[dict[str, Any]] = []

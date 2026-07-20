@@ -51,6 +51,22 @@ export function StrategyResearch() {
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [loadingMembers, setLoadingMembers] = useState(false);
+  const [memberSearch, setMemberSearch] = useState("");
+
+  const isValidMarket = (code: string) =>
+    code.startsWith("6") || code.startsWith("00") || code.startsWith("30");
+
+  const filteredMembers = useMemo(() => {
+    return members.filter((m) => {
+      if (m.name && (m.name.startsWith("*ST") || m.name.startsWith("ST"))) return false;
+      if (!isValidMarket(m.code)) return false;
+      if (memberSearch) {
+        const q = memberSearch.toLowerCase();
+        return m.code.includes(q) || (m.name && m.name.toLowerCase().includes(q));
+      }
+      return true;
+    });
+  }, [members, memberSearch]);
 
   const [backtesting, setBacktesting] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number; current: string } | null>(null);
@@ -68,9 +84,9 @@ export function StrategyResearch() {
   // Members pagination
   const [memberPage, setMemberPage] = useState(1);
   const [memberPageSize, setMemberPageSize] = useState(20);
-  const totalMemberPages = Math.max(1, Math.ceil(members.length / memberPageSize));
+  const totalMemberPages = Math.max(1, Math.ceil(filteredMembers.length / memberPageSize));
   const safeMemberPage = Math.min(memberPage, totalMemberPages);
-  const pagedMembers = members.slice((safeMemberPage - 1) * memberPageSize, safeMemberPage * memberPageSize);
+  const pagedMembers = filteredMembers.slice((safeMemberPage - 1) * memberPageSize, safeMemberPage * memberPageSize);
 
   // Results pagination
   const [resultPage, setResultPage] = useState(1);
@@ -185,10 +201,10 @@ export function StrategyResearch() {
   };
 
   const toggleAll = () => {
-    if (selectedCodes.size === members.length) {
+    if (selectedCodes.size === filteredMembers.length) {
       setSelectedCodes(new Set());
     } else {
-      setSelectedCodes(new Set(members.map((m) => m.code)));
+      setSelectedCodes(new Set(filteredMembers.map((m) => m.code)));
     }
   };
 
@@ -422,7 +438,19 @@ export function StrategyResearch() {
             className="flex w-full items-center justify-between px-4 py-2.5 bg-muted/30 hover:bg-muted/50 transition-colors select-none">
             <div className="flex items-center gap-3">
               <h2 className="text-xs font-semibold text-foreground tracking-wide uppercase">成分股</h2>
-              <span className="text-[11px] tabular-nums text-muted-foreground">{members.length} 只</span>
+              <span className="text-[11px] tabular-nums text-muted-foreground">{filteredMembers.length} 只</span>
+              <div className="flex items-center gap-1 ml-2" onClick={(e) => e.stopPropagation()}>
+                <Search size={12} className="text-muted-foreground" />
+                <input
+                  value={memberSearch}
+                  onChange={(e) => { setMemberSearch(e.target.value); setMemberPage(1); }}
+                  placeholder="代码/名称搜索…"
+                  className="w-32 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary/50"
+                />
+              </div>
+              {members.length !== filteredMembers.length && (
+                <span className="text-[10px] tabular-nums text-muted-foreground">（已过滤 {members.length - filteredMembers.length} 只ST/北证）</span>
+              )}
               {selectedCodes.size > 0 && (
                 <span className="text-[10px] font-medium text-primary bg-primary/10 rounded-full px-2 py-0.5">
                   已选 {selectedCodes.size}
@@ -432,7 +460,7 @@ export function StrategyResearch() {
             <div className="flex items-center gap-2">
               <span onClick={(e) => { e.stopPropagation(); toggleAll(); }}
                 className="text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2 py-0.5 rounded hover:bg-muted">
-                {selectedCodes.size === members.length ? "取消全选" : "全选"}
+                {selectedCodes.size === filteredMembers.length && filteredMembers.length > 0 ? "取消全选" : "全选"}
               </span>
               {showMembers ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
             </div>
@@ -443,7 +471,7 @@ export function StrategyResearch() {
                 <table className="w-full text-xs">
                   <thead className="bg-muted/30">
                     <tr className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                      <th className="w-8 px-2 py-2"><input type="checkbox" checked={selectedCodes.size === members.length && members.length > 0} onChange={toggleAll} className="rounded" /></th>
+                      <th className="w-8 px-2 py-2"><input type="checkbox" checked={filteredMembers.length > 0 && selectedCodes.size === filteredMembers.length} onChange={toggleAll} className="rounded" /></th>
                       <th className="px-2 py-2 text-left font-medium">代码</th>
                       <th className="px-2 py-2 text-left font-medium">名称</th>
                       <th className="px-2 py-2 text-right font-medium">最新价</th>
@@ -489,7 +517,7 @@ export function StrategyResearch() {
                   </select>
                   <span>条</span>
                 </div>
-                <span>第 {safeMemberPage}/{totalMemberPages} 页，共 {members.length} 条</span>
+                <span>第 {safeMemberPage}/{totalMemberPages} 页，共 {filteredMembers.length} 条</span>
                 <div className="flex items-center gap-1">
                   <button onClick={() => setMemberPage(1)} disabled={safeMemberPage <= 1}
                     className="px-2 py-0.5 rounded border border-border text-xs hover:bg-muted transition disabled:opacity-30 disabled:cursor-not-allowed">首页</button>

@@ -1162,7 +1162,8 @@ export interface SignalPoint {
   type: string;
   price: number;
   signal_value: number;
-  entry_label?: string;  // 入场形态标签，如 "入(倒垂)"、"入(反包)"、"入(筑底)"
+  entry_label?: string;   // 图表短标签，如 "入(倒垂)"
+  entry_pattern?: string; // 形态名称，如 "倒垂"、"反包"、"筑底"
 }
 
 export interface OHLCSnapshotBar {
@@ -1182,6 +1183,7 @@ export interface TradeSignal {
   price: number;
   signal_value: number;
   description: string;
+  entry_pattern?: string; // 止跌K形态，如 "倒垂"、"反包"、"筑底"
 }
 
 export interface TradeRecord {

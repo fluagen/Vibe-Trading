@@ -27,12 +27,18 @@ function MetricCard({ label, value, sub, hl }: {
   );
 }
 
-function signalReason(sig: { type: string; description?: string }): string {
+function signalReason(sig: { type: string; description?: string; entry_pattern?: string }): string {
   if (sig.description) {
-    const i = sig.description.indexOf(",");
-    return i > 0 ? sig.description.slice(0, i) : sig.description;
+    let text = sig.description;
+    const i = text.indexOf(",");
+    if (i > 0) text = text.slice(0, i);
+    // Inject pattern into 止跌K label: "止跌K入场" → "止跌K(倒垂)入场"
+    if (sig.entry_pattern && sig.type === "entry_trial") {
+      text = text.replace("止跌K", `止跌K(${sig.entry_pattern})`);
+    }
+    return text;
   }
-  if (sig.type === "entry_trial") return "止跌K";
+  if (sig.type === "entry_trial") return sig.entry_pattern ? `止跌K(${sig.entry_pattern})` : "止跌K";
   if (sig.type === "entry_confirm") return "证伪K";
   if (sig.type === "take_profit") return "止盈";
   if (sig.type === "exit") return "离场";
@@ -40,7 +46,7 @@ function signalReason(sig: { type: string; description?: string }): string {
 }
 
 function signalAction(sig: { type: string; signal_value: number; entry_label?: string }): string {
-  if (sig.type === "entry_trial") return sig.entry_label || `入场(${sig.signal_value.toFixed(2)})`;
+  if (sig.type === "entry_trial") return `入场(${sig.signal_value.toFixed(2)})`;
   if (sig.type === "entry_confirm") return `加仓(${sig.signal_value.toFixed(2)})`;
   if (sig.type === "take_profit") return `止盈(x${sig.signal_value.toFixed(2)})`;
   if (sig.type === "exit") return "退出(-1.0)";
