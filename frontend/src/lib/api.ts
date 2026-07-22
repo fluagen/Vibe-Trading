@@ -288,6 +288,20 @@ export const api = {
     request<StrategyConfigResponse>(`/strategy-research/configs?strategy=${encodeURIComponent(strategy)}`, {
       method: "DELETE",
     }),
+
+  getCandidates: () =>
+    request<{ candidates: CandidateItem[] }>("/strategy-research/candidates"),
+
+  addCandidate: (body: { code: string; name: string; concepts: string[]; industries: string[] }) =>
+    request<CandidateItem>("/strategy-research/candidates", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  removeCandidate: (code: string) =>
+    request<{ ok: boolean }>(`/strategy-research/candidates/${encodeURIComponent(code)}`, {
+      method: "DELETE",
+    }),
 };
 
 // --- Swarm types ---
@@ -1230,4 +1244,12 @@ export interface BacktestProgressEvent {
   done: number;
   total: number;
   current_code: string | null;
+}
+
+export interface CandidateItem {
+  code: string;
+  name: string;
+  added_at: string;
+  concepts: string[];
+  industries: string[];
 }

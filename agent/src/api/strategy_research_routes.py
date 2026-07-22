@@ -14,6 +14,7 @@ from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from src.api.candidate_store import CandidateStore
 from src.api.sentiment_store import SentimentStore
 from src.api.strategy_config_store import StrategyConfigStore
 from src.api.strategy_research_runner import STRATEGY_MAP, run_backtest_blocking
@@ -28,6 +29,13 @@ from src.api.strategy_research_service import StrategyResearchService
 class SaveConfigRequest(BaseModel):
     strategy: str
     params: dict[str, Any]
+
+
+class CandidateAddRequest(BaseModel):
+    code: str
+    name: str
+    concepts: list[str] = []
+    industries: list[str] = []
 
 
 class BacktestRequest(BaseModel):
@@ -56,6 +64,10 @@ def _get_sentiment_store() -> SentimentStore:
 
 def _get_config_store() -> StrategyConfigStore:
     return StrategyConfigStore()
+
+
+def _get_candidate_store() -> CandidateStore:
+    return CandidateStore()
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +135,27 @@ def register_strategy_research_routes(app: FastAPI) -> None:
         return svc.get_sector_members(
             bk_code=bk_code, bk_name=bk_code, sector_type=sector_type
         )
+
+    # -- candidates -----------------------------------------------------------
+
+    @app.get("/strategy-research/candidates")
+    async def list_candidates():
+        """Return all candidate stocks in the watchlist."""
+        store = _get_candidate_store()
+        return {"candidates": store.list_all()}
+
+    @app.post("/strategy-research/candidates")
+    async def add_candidate(body: CandidateAddRequest):
+        """Add or update a candidate stock."""
+        store = _get_candidate_store()
+        return store.upsert(body.code, body.name, body.concepts, body.industries)
+
+    @app.delete("/strategy-research/candidates/{code:path}")
+    async def remove_candidate(code: str):
+        """Remove a candidate stock from the watchlist."""
+        store = _get_candidate_store()
+        ok = store.delete(code)
+        return {"ok": ok}
 
     # -- backtest -------------------------------------------------------------
 

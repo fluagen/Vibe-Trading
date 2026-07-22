@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { TrendingUp, RefreshCw, ChevronDown, ChevronUp, Hourglass, 
-Download, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { api, type SentimentOverviewResponse, type SentimentBoardItem, type SectorDetailPoint, type SentimentBoardItemSimple } from "@/lib/api";
 import { CrowdingChart } from "@/components/charts/CrowdingChart";
 

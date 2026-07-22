@@ -9,10 +9,11 @@ import {
   type TradingDaysResponse,
   type StrategyConfigParams,
 } from "@/lib/api";
+import { CandidateListTab } from "@/components/strategy-research/CandidateListTab";
 import { DetailPanel } from "@/components/strategy-research/DetailPanel";
 import { StrategyConfigTab } from "@/components/strategy-research/StrategyConfigTab";
 
-type SectorType = "industry" | "concept";
+type SectorType = "industry" | "concept" | "candidate";
 type DatePreset = "30" | "60" | "120" | "250" | "custom";
 
 const STATE_COLORS: Record<string, string> = {
@@ -74,7 +75,7 @@ export function StrategyResearch() {
   const [selectedResultCode, setSelectedResultCode] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  const [activeTab, setActiveTab] = useState<"config" | "backtest">("backtest");
+  const [activeTab, setActiveTab] = useState<"config" | "backtest" | "candidates">("backtest");
   const [backtestParams, setBacktestParams] = useState<StrategyConfigParams | null>(null);
   const [showParamsOverride, setShowParamsOverride] = useState(false);
 
@@ -161,6 +162,7 @@ export function StrategyResearch() {
   }, [t]);
 
   useEffect(() => {
+    if (sectorType === "candidate") { setSectors([]); return; }
     api.getStrategyResearchSectors(sectorType)
       .then((d) => setSectors(d.sectors || []))
       .catch(() => toast.error(t("strategyResearch.loadFailed")));
@@ -184,7 +186,10 @@ export function StrategyResearch() {
       const data = await api.getSectorMembers(bkCode, sectorType);
       const m = data.members || [];
       setMembers(m);
-      setSelectedCodes(new Set(m.map((x) => x.code)));
+      const valid = m.filter((x) =>
+        isValidMarket(x.code) && !(x.name && (x.name.startsWith("*ST") || x.name.startsWith("ST")))
+      );
+      setSelectedCodes(new Set(valid.map((x) => x.code)));
     } catch {
       toast.error(t("strategyResearch.loadFailed"));
     } finally {
@@ -259,6 +264,22 @@ export function StrategyResearch() {
   useEffect(() => { setMemberPage(1); }, [members.length]);
   useEffect(() => { setResultPage(1); }, [results.length]);
 
+  const handleAddCandidate = async (code: string) => {
+    const member = members.find((m) => m.code === code);
+    const name = codeToName[code] || code;
+    try {
+      await api.addCandidate({
+        code,
+        name,
+        concepts: member?.concepts || [],
+        industries: member?.industries || [],
+      });
+      toast.success(t("strategyResearch.candidateAdded"));
+    } catch {
+      toast.error(t("strategyResearch.loadFailed"));
+    }
+  };
+
   const detailData = results.find((r) => r.code === selectedResultCode) || null;
   const hasSelection = selectedCodes.size > 0;
 
@@ -277,7 +298,7 @@ export function StrategyResearch() {
           </div>
           <div className="h-5 w-px bg-border" />
           <div className="flex rounded-md border border-border bg-card p-0.5">
-            {(["backtest", "config"] as const).map((tab) => (
+            {(["backtest", "config", "candidates"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -310,6 +331,8 @@ export function StrategyResearch() {
       {/* Config Tab */}
       {activeTab === "config" && <StrategyConfigTab />}
 
+      {activeTab === "candidates" && <CandidateListTab />}
+
       {/* Backtest Tab */}
       {activeTab === "backtest" && (
       <>
@@ -339,9 +362,35 @@ export function StrategyResearch() {
         <div className="h-5 w-px bg-border" />
 
         <div className="flex rounded bg-muted/50 p-0.5">
-          {(["industry", "concept"] as SectorType[]).map((st) => (
+          {(["industry", "concept", "candidate"] as SectorType[]).map((st) => (
             <button key={st}
-              onClick={() => { setSectorType(st); setSelectedSector(""); setSectorSearch(""); setMembers([]); }}
+              onClick={async () => {
+                setSectorType(st);
+                setSelectedSector("");
+                setSectorSearch("");
+                if (st === "candidate") {
+                  setLoadingMembers(true);
+                  try {
+                    const data = await api.getCandidates();
+                    const m: SectorMemberItem[] = (data.candidates || []).map((c) => ({
+                      code: c.code,
+                      name: c.name,
+                      price: 0,
+                      change_pct: 0,
+                      concepts: c.concepts || [],
+                      industries: c.industries || [],
+                    }));
+                    setMembers(m);
+                    setSelectedCodes(new Set(m.map((x) => x.code)));
+                  } catch {
+                    toast.error(t("strategyResearch.loadFailed"));
+                  } finally {
+                    setLoadingMembers(false);
+                  }
+                } else {
+                  setMembers([]);
+                }
+              }}
               className={`px-2.5 py-1 text-xs rounded-sm font-medium transition-colors ${
                 sectorType === st ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
               }`}>
@@ -350,6 +399,7 @@ export function StrategyResearch() {
           ))}
         </div>
 
+        {sectorType !== "candidate" && (
         <div className="relative">
           <div className="relative">
             <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
@@ -375,6 +425,7 @@ export function StrategyResearch() {
             </div>
           )}
         </div>
+        )}
 
         <div className="h-5 w-px bg-border" />
 
@@ -655,7 +706,7 @@ export function StrategyResearch() {
                           {isOpen && detailData && (
                             <tr key={`${r.code}-detail`}>
                               <td colSpan={9} className="px-4 py-3 bg-muted/15 border-t border-primary/10">
-                                <DetailPanel data={detailData} onClose={() => setSelectedResultCode(null)} />
+                                <DetailPanel data={detailData} onClose={() => setSelectedResultCode(null)} onAddCandidate={handleAddCandidate} />
                               </td>
                             </tr>
                           )}

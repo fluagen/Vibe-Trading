@@ -3,7 +3,7 @@ import { X, Maximize2, Minimize2 } from "lucide-react";
 import type { BacktestDetailItem } from "@/lib/api";
 import { MiniKLineChart } from "@/components/charts/MiniKLineChart";
 
-interface DetailPanelProps { data: BacktestDetailItem; onClose: () => void; }
+interface DetailPanelProps { data: BacktestDetailItem; onClose: () => void; onAddCandidate?: (code: string) => void; }
 
 const STATE_LABELS: Record<string, string> = {
   no_structure: "无结构", forming: "形成中", up_phase: "上涨",
@@ -53,7 +53,7 @@ function signalAction(sig: { type: string; signal_value: number; entry_label?: s
   return sig.type;
 }
 
-export function DetailPanel({ data, onClose }: DetailPanelProps) {
+export function DetailPanel({ data, onClose, onAddCandidate }: DetailPanelProps) {
   const [chartExpanded, setChartExpanded] = useState(false);
   const stateColor = STATE_COLORS[data.final_state] || "bg-slate-500";
   const winHl = data.win_rate >= 0.5 ? "green" as const : data.win_rate > 0 ? "amber" as const : "red" as const;
@@ -70,6 +70,14 @@ export function DetailPanel({ data, onClose }: DetailPanelProps) {
           <span className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-medium text-white ${stateColor}`}>
             {STATE_LABELS[data.final_state] || data.final_state}
           </span>
+          {onAddCandidate && (
+            <button
+              onClick={() => onAddCandidate(data.code)}
+              className="text-[10px] px-2 py-0.5 rounded border border-border text-muted-foreground hover:text-primary hover:border-primary/30 transition-colors"
+            >
+              加候选
+            </button>
+          )}
         </div>
         <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:text-foreground"><X size={14} /></button>
       </div>
