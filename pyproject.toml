@@ -99,9 +99,12 @@ deepseek = [
     "langchain-deepseek>=1.0.0,<2",
 ]
 ashare = [
-    # Free, no-auth A-share source over BaoStock's TCP protocol; bypasses the
+    # Free, no-auth A-share sources over TCP protocols; bypasses the
     # HTTP CDN IP blocks that affect eastmoney-backed sources. The Tencent
     # A-share loader needs no extra dependency (stdlib HTTP only).
+    # Note: mootdx is NOT listed here due to httpx version conflict
+    # (mootdx requires httpx<0.26, project requires httpx>=0.28).
+    # Install separately: pip install --no-deps mootdx
     "baostock>=0.8.8",
 ]
 harmonic = [

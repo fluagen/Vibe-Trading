@@ -33,6 +33,7 @@ smartmoneyconcepts>=0.0.1
 # optional: pip install "vibe-trading-ai[harmonic]" for the pyharmonics-backed harmonic pattern detector
 
 # Data Providers
+mootdx>=0.11.7
 tushare>=1.2.89
 requests>=2.31.0
 yfinance>=0.2.30
