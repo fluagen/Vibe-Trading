@@ -13,9 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.config import get_app_data_dir
+
 _log = logging.getLogger(__name__)
 
-_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "strategy_config.db"
+_DB_PATH = get_app_data_dir() / "strategy_config.db"
 
 _DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     "up_trend_structure": {

@@ -12,9 +12,11 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
+from src.config import get_app_data_dir
+
 _log = logging.getLogger(__name__)
 
-_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "candidates.db"
+_DB_PATH = get_app_data_dir() / "candidates.db"
 
 
 class CandidateStore:

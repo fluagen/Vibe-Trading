@@ -13,13 +13,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.config import get_app_data_dir
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_DEFAULT_DB_PATH = str(Path(__file__).resolve().parent.parent.parent / "data" / "market_data.db")
+_DEFAULT_DB_PATH = str(get_app_data_dir() / "market_data.db")
 
 _VALID_SECTOR_TYPES = ("industry", "concept")
 

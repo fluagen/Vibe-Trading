@@ -7,12 +7,13 @@ from src.config.loader import (
     merge_agent_config_overrides,
     sanitize_session_overrides,
 )
-from src.config.paths import get_config_path, get_data_dir, get_runtime_root
+from src.config.paths import get_app_data_dir, get_config_path, get_data_dir, get_runtime_root
 from src.config.schema import AgentConfig, MCPServerConfig
 
 __all__ = [
     "AgentConfig",
     "MCPServerConfig",
+    "get_app_data_dir",
     "get_config_path",
     "get_data_dir",
     "get_runtime_root",

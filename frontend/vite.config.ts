@@ -14,7 +14,6 @@ const PROXY_PATHS = [
   "/shadow-reports",
   "/sentiment",
   "/strategy-research",
-  "/opportunity-pool",
 ];
 
 export default defineConfig(({ mode }) => {
