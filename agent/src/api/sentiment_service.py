@@ -235,19 +235,16 @@ class SentimentService:
         # 资金流入排名（summary card 用）
         by_inflow = sorted(enriched, key=lambda x: x.get("main_net_inflow") or -(10**18), reverse=True)[:top_n]
 
-        # 资金偏好（连续流入天数）— 只对拥挤度排序的前 page_size 条计算
-        for b in by_crowding[:page_size]:
-            hist = self.store.get_sector_history(b["board_code"], board_type, end_date=trade_date, limit=10)
-            cons, fav = consecutive_inflow_days(hist)
-            b["consecutive_inflow_days"] = cons
-            b["is_favored"] = fav
-
-        for b in by_inflow[:page_size]:
-            if "is_favored" not in b:
+        # 资金偏好（连续流入天数）— 对所有主力净流入为正的板块计算
+        for b in enriched:
+            if (b.get("main_net_inflow") or 0) > 0:
                 hist = self.store.get_sector_history(b["board_code"], board_type, end_date=trade_date, limit=10)
                 cons, fav = consecutive_inflow_days(hist)
                 b["consecutive_inflow_days"] = cons
                 b["is_favored"] = fav
+            else:
+                b["consecutive_inflow_days"] = 0
+                b["is_favored"] = False
 
         return {
             "ok": True,
