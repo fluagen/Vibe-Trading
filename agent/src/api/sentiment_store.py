@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sqlite3
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -50,6 +52,18 @@ CREATE TABLE IF NOT EXISTS market_sector (
 );
 """
 
+CREATE_SECTOR_MEMBERS = """
+CREATE TABLE IF NOT EXISTS sector_members (
+    bk_code       TEXT NOT NULL,
+    bk_name       TEXT NOT NULL,
+    sector_type   TEXT NOT NULL,
+    stock_code    TEXT NOT NULL,
+    stock_name    TEXT NOT NULL,
+    collected_at  TEXT NOT NULL,
+    PRIMARY KEY (bk_code, stock_code)
+);
+"""
+
 UPSERT_MARKET_TOTAL = """
 INSERT OR REPLACE INTO market_total
     (trade_date, total_amount, sh_amount, sz_amount, collected_at)
@@ -82,14 +96,136 @@ class SentimentStore:
     @property
     def conn(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=OFF")
+            self._conn = self._open_connection()
         return self._conn
+
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open a SQLite connection with integrity check and auto-recovery."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=OFF")
+
+        # Integrity check on first open — fast path for healthy DBs
+        if not self._check_integrity(conn):
+            logger.warning("Database corruption detected at %s, attempting recovery...", self.db_path)
+            conn.close()
+            self._recover_from_corruption()
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=OFF")
+            # Re-verify after recovery
+            if not self._check_integrity(conn):
+                logger.error("Recovery failed — database remains corrupt. Recreating from scratch.")
+                conn.close()
+                self._recreate_database()
+                conn = sqlite3.connect(self.db_path)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA foreign_keys=OFF")
+
+        return conn
+
+    @staticmethod
+    def _check_integrity(conn: sqlite3.Connection) -> bool:
+        """Run PRAGMA quick_check — returns True if database is healthy."""
+        try:
+            result = conn.execute("PRAGMA quick_check").fetchone()
+            return result is not None and result[0] == "ok"
+        except sqlite3.DatabaseError:
+            return False
+
+    def _recover_from_corruption(self) -> None:
+        """Attempt to salvage data from a corrupt database using sqlite3 .recover.
+
+        Backs up the corrupt file, recovers what it can, and replaces the
+        database with the recovered version.  Tables that could not be recovered
+        are left empty but structurally valid.
+        """
+        backup_path = f"{self.db_path}.corrupted-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        shutil.copy2(self.db_path, backup_path)
+        logger.info("Corrupt database backed up to %s", backup_path)
+
+        # Run sqlite3 CLI .recover to salvage data
+        try:
+            result = subprocess.run(
+                ["sqlite3", self.db_path, ".recover"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                raise RuntimeError(f"sqlite3 .recover failed: {result.stderr[:500]}")
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            logger.error("Cannot run sqlite3 CLI for recovery: %s", exc)
+            self._recreate_database()
+            return
+
+        # Rebuild into a new database
+        recovered_sql = result.stdout
+        temp_db = self.db_path + ".recovering"
+        try:
+            rebuild_result = subprocess.run(
+                ["sqlite3", temp_db],
+                input=recovered_sql, capture_output=True, text=True, timeout=30,
+            )
+            if rebuild_result.returncode != 0:
+                raise RuntimeError(f"Rebuild failed: {rebuild_result.stderr[:500]}")
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            logger.error("Cannot rebuild recovered database: %s", exc)
+            if os.path.exists(temp_db):
+                os.remove(temp_db)
+            self._recreate_database()
+            return
+
+        # Verify the recovered database
+        recovered_conn = sqlite3.connect(temp_db)
+        recovered_conn.row_factory = sqlite3.Row
+        if not self._check_integrity(recovered_conn):
+            recovered_conn.close()
+            os.remove(temp_db)
+            logger.error("Recovered database still corrupt — recreating from scratch")
+            self._recreate_database()
+            return
+
+        # Log recovery stats
+        for table in ("market_total", "market_sector", "sector_members"):
+            try:
+                count = recovered_conn.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()[0]
+                logger.info("Recovered %s: %d rows", table, count)
+            except sqlite3.DatabaseError:
+                logger.warning("Recovered table %s is still unreadable", table)
+
+        recovered_conn.close()
+
+        # Atomically replace the corrupt database
+        os.replace(temp_db, self.db_path)
+        logger.info("Database recovered successfully from %s", backup_path)
+
+    def _recreate_database(self) -> None:
+        """Drop and recreate the database from scratch when recovery is impossible."""
+        if os.path.exists(self.db_path):
+            backup_path = f"{self.db_path}.corrupted-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            shutil.copy2(self.db_path, backup_path)
+            logger.warning("Corrupt database backed up to %s, recreating empty", backup_path)
+            os.remove(self.db_path)
+        # Initialise an empty database
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(CREATE_MARKET_TOTAL)
+        conn.execute(CREATE_MARKET_SECTOR)
+        conn.execute(CREATE_SECTOR_MEMBERS)
+        conn.commit()
+        conn.close()
+        logger.info("Empty database created at %s — data must be re-collected", self.db_path)
 
     def close(self) -> None:
         if self._conn is not None:
+            try:
+                # Checkpoint WAL so the main DB file is consistent on disk
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.DatabaseError:
+                pass
             self._conn.close()
             self._conn = None
 
@@ -98,6 +234,7 @@ class SentimentStore:
     def ensure_tables(self) -> None:
         self.conn.execute(CREATE_MARKET_TOTAL)
         self.conn.execute(CREATE_MARKET_SECTOR)
+        self.conn.execute(CREATE_SECTOR_MEMBERS)
         self.conn.commit()
 
     # -- write ----------------------------------------------------------------
