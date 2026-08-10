@@ -18,10 +18,15 @@ ma10 = close.rolling(10).mean()
 ma20 = close.rolling(20).mean()
 
 # 三条均线的最高值与最低值的差
-ma_range = np.maximum(np.maximum(ma5, ma10), ma20) - np.minimum(np.minimum(ma5, ma10), ma20)
+ma_max = np.maximum(np.maximum(ma5, ma10), ma20)
+ma_min = np.minimum(np.minimum(ma5, ma10), ma20)
 
-# 除以股价得到百分比
-spread_pct = ma_range / close
+# 三条均线的平均值
+ma_mean = (ma5 + ma10 + ma20) / 3
+
+# 除以均线的平均值，得到百分比
+spread_pct = (ma_max - ma_min) / ma_mean
+
 
 # 极差小于 2% 视为粘合
 is_sticky = spread_pct < 0.02
