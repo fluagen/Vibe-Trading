@@ -33,7 +33,17 @@ STRATEGY_MAP: dict[str, dict[str, str]] = {
         "signal_module": "src.skills.up_trend_structure.signal_engine",
         "signal_class": "SignalEngine",
     },
+    "node_trading": {
+        "signal_module": "src.skills.node_trading.signal_engine",
+        "signal_class": "SignalEngine",
+        "has_detector": "false",
+    },
 }
+
+
+def _strategy_has_detector(strategy_name: str) -> bool:
+    entry = STRATEGY_MAP.get(strategy_name, {})
+    return entry.get("has_detector", "true") != "false"
 
 
 # Parameter keys shared by both detector and signal engine.
@@ -51,20 +61,36 @@ _DETECTOR_PARAM_KEYS = _COMMON_PARAM_KEYS | {"divergence_repair_bars"}
 # Parameter keys used by the signal engine (SignalEngine.__init__).
 _SIGNAL_PARAM_KEYS = _COMMON_PARAM_KEYS | {"stop_loss_pct", "take_profit_pct", "ma_short", "ma_mid"}
 
+# All parameter keys for node_trading SignalEngine (22 params, no separate detector).
+_NODE_TRADING_PARAM_KEYS = {
+    "r_s5", "cv_s5", "r_s4", "rs_s4",
+    "r_s3_lower", "r_s3_upper", "cv_s3", "r_s2_lower", "r_s2_upper",
+    "reversal_vol_ratio", "s2_reversal_r_min", "support_ma_tolerance", "s1_breakout_vol_ratio",
+    "reversal_low_r_size", "reversal_high_r_size", "reversal_r_boundary",
+    "support_s3_size", "support_s4_size", "sticky_breakout_size",
+    "hard_stop_pct", "reversal_node_fail_days", "tp_r_s5", "tp_r_s4",
+}
+
 
 def _load_strategy(strategy_name: str):
     entry = STRATEGY_MAP.get(strategy_name)
     if not entry:
         raise ValueError(f"Unknown strategy: {strategy_name}")
-    detector_mod = importlib.import_module(entry["detector_module"])
-    detector_cls = getattr(detector_mod, entry["detector_class"])
     signal_mod = importlib.import_module(entry["signal_module"])
     signal_cls = getattr(signal_mod, entry["signal_class"])
-    return detector_cls, signal_cls
+    if _strategy_has_detector(strategy_name):
+        detector_mod = importlib.import_module(entry["detector_module"])
+        detector_cls = getattr(detector_mod, entry["detector_class"])
+        return detector_cls, signal_cls
+    return None, signal_cls
 
 
-def _split_params(params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _split_params(params: dict[str, Any], strategy_name: str = "up_trend_structure") -> tuple[dict[str, Any], dict[str, Any]]:
     """Split combined params dict into detector_kwargs and signal_kwargs."""
+    if strategy_name == "node_trading":
+        # All params go to signal engine; no separate detector.
+        signal_kwargs = {k: v for k, v in params.items() if k in _NODE_TRADING_PARAM_KEYS}
+        return {}, signal_kwargs
     detector_kwargs = {k: v for k, v in params.items() if k in _DETECTOR_PARAM_KEYS}
     signal_kwargs = {k: v for k, v in params.items() if k in _SIGNAL_PARAM_KEYS}
     return detector_kwargs, signal_kwargs
@@ -119,6 +145,7 @@ def run_single_stock_backtest(
     df: pd.DataFrame,
     detector: Any,
     signal_engine: Any,
+    strategy_name: str = "up_trend_structure",
 ) -> dict[str, Any]:
     """Run backtest for ONE stock.
 
@@ -126,15 +153,19 @@ def run_single_stock_backtest(
         code: Suffixed stock code (e.g. ``"600519.SH"``).
         df: OHLCV DataFrame (columns: open, high, low, close, volume;
             DatetimeIndex).
-        detector: ``UpTrendStructure`` instance (or equivalent for future
-            strategies).
+        detector: ``UpTrendStructure`` instance (or None for strategies
+            without separate detector, e.g. node_trading).
         signal_engine: ``SignalEngine`` instance.
+        strategy_name: Key into ``STRATEGY_MAP``.
 
     Returns a dict with summary, signals, equity_curve, and ohlcv_snapshot
     suitable for JSON serialization.
     """
     if df is None or df.empty:
         return _empty_result(code)
+
+    if strategy_name == "node_trading":
+        return _run_node_trading_backtest(code, df, signal_engine)
 
     # 1. Compute structure states.
     try:
@@ -206,6 +237,9 @@ def run_single_stock_backtest(
         "annual_return": metrics["annual_return"],
         "max_drawdown": metrics["max_drawdown"],
         "sharpe": metrics["sharpe"],
+        "annual_volatility": metrics["annual_volatility"],
+        "profit_factor": metrics["profit_factor"],
+        "final_equity": metrics["final_equity"],
         "bsk_count": bsk_count,
         "ck_count": ck_count,
         "latest_signal": signal_points[-1] if signal_points else None,
@@ -254,11 +288,11 @@ def run_backtest_blocking(
     detector_cls, signal_cls = _load_strategy(strategy_name)
 
     if params:
-        detector_kwargs, signal_kwargs = _split_params(params)
+        detector_kwargs, signal_kwargs = _split_params(params, strategy_name)
     else:
         detector_kwargs, signal_kwargs = {}, {}
 
-    detector = detector_cls(**detector_kwargs)
+    detector = detector_cls(**detector_kwargs) if detector_cls is not None else None
     signal_engine = signal_cls(**signal_kwargs)
     loader = _get_loader()
 
@@ -271,7 +305,7 @@ def run_backtest_blocking(
                 [code], start_date=start_date, end_date=end_date, interval="1D"
             )
             df = data_map.get(code)
-            result = run_single_stock_backtest(code, df, detector, signal_engine)
+            result = run_single_stock_backtest(code, df, detector, signal_engine, strategy_name)
             results[code] = result
 
             if on_stock_result:
@@ -283,6 +317,325 @@ def run_backtest_blocking(
         on_progress(i + 1, total, code)
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Node trading backtest pipeline
+# ---------------------------------------------------------------------------
+
+_NODE_TYPE_LABELS: dict[str, str] = {
+    "reversal": "反转",
+    "support": "支撑",
+    "sticky_breakout": "粘合突破",
+}
+
+_NODE_STAGE_LABELS: dict[str, str] = {
+    "S1": "蓄势", "S2": "萌芽", "S3": "健康趋势", "S4": "加速", "S5": "极端",
+}
+
+
+def _run_node_trading_backtest(
+    code: str, df: pd.DataFrame, signal_engine: Any,
+) -> dict[str, Any]:
+    """Run node_trading backtest for ONE stock."""
+    # 1. Generate signals.
+    try:
+        signals = signal_engine.generate({code: df})
+        sig_series = signals.get(code, pd.Series(dtype=float))
+        bar_meta = getattr(signal_engine, "bar_metadata_", [])
+    except Exception:
+        _log.warning("signal_engine.generate failed for %s", code, exc_info=True)
+        return _empty_result(code)
+
+    # 2. Evaluate performance (reuse common metrics).
+    metrics = _evaluate_performance(df, sig_series)
+
+    # 3. Build node-trading signal points.
+    signal_points = _build_node_trading_signal_points(df, sig_series, bar_meta)
+
+    # 4. Build trade records from bar metadata.
+    trades = _build_node_trading_trades(df, sig_series, bar_meta)
+
+    # 5. Stage summary and node counts.
+    if bar_meta:
+        stage_counts: dict[str, int] = {}
+        node_counts: dict[str, int] = {"reversal": 0, "support": 0, "sticky_breakout": 0}
+        for m in bar_meta:
+            s = m.get("stage", "S1")
+            stage_counts[s] = stage_counts.get(s, 0) + 1
+            nt = m.get("node_type")
+            if nt and nt in node_counts:
+                node_counts[nt] += 1
+        last_meta = bar_meta[-1]
+        latest_stage = last_meta.get("stage", "S1")
+        latest_alignment = last_meta.get("alignment", "crossed")
+        final_state = f"{latest_stage}({latest_alignment})"
+        latest_r = last_meta.get("r", 0)
+        latest_cv = last_meta.get("cv", 0)
+        latest_rs = last_meta.get("rs", 0)
+    else:
+        stage_counts = {}
+        node_counts = {"reversal": 0, "support": 0, "sticky_breakout": 0}
+        final_state = "S1(crossed)"
+        latest_stage = "S1"
+        latest_alignment = "crossed"
+        latest_r = latest_cv = latest_rs = 0.0
+
+    node_count_str = f"反{node_counts['reversal']} 支{node_counts['support']} 突{node_counts['sticky_breakout']}"
+
+    # 6. Build states-like DataFrame for OHLCV snapshot colouring.
+    states_df = _node_trading_states_df(df, bar_meta)
+
+    # 7. OHLCV snapshot.
+    ohlcv_snapshot = _build_ohlcv_snapshot(df, states_df, signal_points)
+
+    # 8. Current state line data.
+    ma5 = float(df["close"].rolling(5).mean().iloc[-1]) if len(df) >= 5 else 0.0
+    ma10 = float(df["close"].rolling(10).mean().iloc[-1]) if len(df) >= 10 else 0.0
+    ma20 = float(df["close"].rolling(20).mean().iloc[-1]) if len(df) >= 20 else 0.0
+    current_close = float(df["close"].iloc[-1])
+    current_state_line = (
+        f"{final_state} R={latest_r:.1f} CV={latest_cv:.3f} RS={latest_rs:.2f}  |  "
+        f"MA5={ma5:.2f} MA10={ma10:.2f} MA20={ma20:.2f} Close={current_close:.2f}"
+    )
+
+    trading_days = len(df)
+    date_start = str(df.index[0])[:10] if len(df) > 0 else ""
+    date_end = str(df.index[-1])[:10] if len(df) > 0 else ""
+
+    return {
+        "code": code,
+        "name": code,
+        "final_state": final_state,
+        "previous_state": "",
+        "trade_count": metrics["trade_count"],
+        "win_rate": metrics["win_rate"],
+        "win_count": metrics["win_count"],
+        "loss_count": metrics["loss_count"],
+        "cumulative_return": metrics["cumulative_return"],
+        "annual_return": metrics["annual_return"],
+        "max_drawdown": metrics["max_drawdown"],
+        "sharpe": metrics["sharpe"],
+        "annual_volatility": metrics["annual_volatility"],
+        "profit_factor": metrics["profit_factor"],
+        "final_equity": metrics["final_equity"],
+        "bsk_count": node_counts["reversal"],
+        "ck_count": node_counts["support"] + node_counts["sticky_breakout"],
+        "node_count_str": node_count_str,
+        "latest_stage": latest_stage,
+        "latest_alignment": latest_alignment,
+        "latest_r": latest_r,
+        "latest_cv": latest_cv,
+        "latest_rs": latest_rs,
+        "current_state_line": current_state_line,
+        "latest_signal": signal_points[-1] if signal_points else None,
+        "signal_points": signal_points,
+        "trades": [],
+        "trade_rows": trades,
+        "trading_days": trading_days,
+        "date_start": date_start,
+        "date_end": date_end,
+        "equity_curve": metrics["equity_curve"],
+        "states_summary": stage_counts,
+        "ohlcv_snapshot": ohlcv_snapshot,
+    }
+
+
+def _node_trading_states_df(df: pd.DataFrame, bar_meta: list[dict]) -> pd.DataFrame:
+    """Build a states-like DataFrame from bar metadata for OHLCV colouring."""
+    states = pd.DataFrame(
+        {"state": [m.get("stage", "S1") for m in bar_meta]},
+        index=df.index[:len(bar_meta)],
+    )
+    return states
+
+
+def _build_node_trading_signal_points(
+    df: pd.DataFrame,
+    signals: pd.Series,
+    bar_meta: list[dict],
+) -> list[dict[str, Any]]:
+    """Build signal points with node type labels for node_trading."""
+    points: list[dict[str, Any]] = []
+    position = 0.0
+    for i, idx in enumerate(signals.index):
+        sig = float(signals.loc[idx])
+        if sig == 0.0:
+            continue
+        try:
+            price = float(df["close"].loc[idx])
+        except (KeyError, TypeError):
+            price = 0.0
+
+        meta = bar_meta[i] if i < len(bar_meta) else {}
+        node_type = meta.get("node_type")
+        exit_reason = meta.get("exit_reason")
+
+        if sig > 0:
+            if position > 0 and sig < position:
+                stype = "take_profit"
+            elif position > 0 and sig > position:
+                stype = "entry_add"
+            else:
+                stype = "entry"
+            position = sig
+        else:
+            stype = "exit"
+            position = 0.0
+
+        pt: dict[str, Any] = {
+            "date": str(idx)[:10],
+            "type": stype,
+            "price": round(price, 2),
+            "signal_value": round(sig, 2),
+        }
+        if node_type:
+            label = _NODE_TYPE_LABELS.get(node_type, node_type)
+            pt["entry_label"] = f"入({label})"
+            pt["entry_pattern"] = node_type
+        if exit_reason:
+            pt["exit_reason"] = exit_reason
+        points.append(pt)
+    return points
+
+
+def _build_node_trading_trades(
+    df: pd.DataFrame,
+    signals: pd.Series,
+    bar_meta: list[dict],
+) -> list[dict[str, Any]]:
+    """Build flat trade rows for node_trading matching output-template format.
+
+    Each row is one entry→exit pair.  Halving/partial-TP produces multiple rows
+    from the same entry.
+    """
+    if df is None or df.empty or signals.empty:
+        return []
+
+    close = df["close"]
+
+    # State: pending entries (FIFO — entries consumed by exits).
+    pending: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    position = 0.0
+
+    for i, idx in enumerate(signals.index):
+        sig = float(signals.loc[idx])
+        if sig == 0.0:
+            continue
+        try:
+            price = float(close.loc[idx])
+        except (KeyError, TypeError):
+            price = 0.0
+
+        meta = bar_meta[i] if i < len(bar_meta) else {}
+        stage = meta.get("stage", "")
+        alignment = meta.get("alignment", "")
+        r_val = meta.get("r", 0)
+        cv_val = meta.get("cv", 0)
+        rs_val = meta.get("rs", 0)
+
+        def _stage_desc() -> str:
+            return f"{stage}({alignment}) R={r_val:.1f} CV={cv_val:.3f} RS={rs_val:.2f}"
+
+        if sig > 0:
+            node_type = meta.get("node_type", "")
+            node_label = _NODE_TYPE_LABELS.get(node_type, "") if node_type else ""
+            entry_size = abs(sig - position) if position > 0 else sig
+
+            if position > 0 and sig < position:
+                # Partial take-profit (halve): record exit row against FIRST pending entry.
+                exit_size = position - sig
+                if pending:
+                    ent = pending[0]
+                    ent_size = ent["size"]
+                    # Take from the first pending entry proportionally.
+                    consumed = min(exit_size, ent_size)
+                    ret = (price - ent["price"]) / ent["price"] * consumed if ent["price"] else 0.0
+                    rows.append({
+                        "entry_date": ent["date"],
+                        "entry_stage": ent["stage_desc"],
+                        "exit_date": str(idx)[:10],
+                        "exit_stage": _stage_desc(),
+                        "node_label": ent["node_label"],
+                        "position": round(consumed, 2),
+                        "entry_price": ent["price"],
+                        "exit_price": round(price, 2),
+                        "return_pct": round(ret, 4),
+                        "exit_reason": meta.get("exit_reason") or "止盈",
+                        "is_open": False,
+                    })
+                    ent["size"] -= consumed
+                    if ent["size"] <= 0.001:
+                        pending.pop(0)
+            elif position > 0 and sig > position:
+                # Add position: record as a new pending entry.
+                add_size = sig - position
+                pending.append({
+                    "date": str(idx)[:10],
+                    "stage_desc": _stage_desc(),
+                    "price": round(price, 2),
+                    "size": add_size,
+                    "node_label": node_label,
+                })
+            else:
+                # Fresh entry.
+                pending.append({
+                    "date": str(idx)[:10],
+                    "stage_desc": _stage_desc(),
+                    "price": round(price, 2),
+                    "size": sig,
+                    "node_label": node_label,
+                })
+            position = sig
+
+        else:
+            # Exit: consume pending entries FIFO.
+            remaining = position  # total to exit
+            position = 0.0
+            exit_reason = meta.get("exit_reason") or "离场"
+            while remaining > 0.001 and pending:
+                ent = pending.pop(0)
+                consumed = min(remaining, ent["size"])
+                ret = (price - ent["price"]) / ent["price"] * consumed if ent["price"] else 0.0
+                rows.append({
+                    "entry_date": ent["date"],
+                    "entry_stage": ent["stage_desc"],
+                    "exit_date": str(idx)[:10],
+                    "exit_stage": _stage_desc(),
+                    "node_label": ent["node_label"],
+                    "position": round(consumed, 2),
+                    "entry_price": ent["price"],
+                    "exit_price": round(price, 2),
+                    "return_pct": round(ret, 4),
+                    "exit_reason": exit_reason,
+                    "is_open": False,
+                })
+                remaining -= consumed
+                if ent["size"] - consumed > 0.001:
+                    ent["size"] -= consumed
+
+    # Any remaining pending entries are still open.
+    if pending:
+        last_idx = df.index[-1]
+        last_price = float(close.iloc[-1])
+        for ent in pending:
+            ret = (last_price - ent["price"]) / ent["price"] * ent["size"] if ent["price"] else 0.0
+            rows.append({
+                "entry_date": ent["date"],
+                "entry_stage": ent["stage_desc"],
+                "exit_date": str(last_idx)[:10],
+                "exit_stage": "",
+                "node_label": ent["node_label"],
+                "position": round(ent["size"], 2),
+                "entry_price": ent["price"],
+                "exit_price": round(last_price, 2),
+                "return_pct": round(ret, 4),
+                "exit_reason": "持仓中",
+                "is_open": True,
+            })
+
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +657,9 @@ def _empty_result(code: str) -> dict[str, Any]:
         "annual_return": 0.0,
         "max_drawdown": 0.0,
         "sharpe": 0.0,
+        "annual_volatility": 0.0,
+        "profit_factor": 0.0,
+        "final_equity": 1.0,
         "bsk_count": 0,
         "ck_count": 0,
         "latest_signal": None,
@@ -390,6 +746,26 @@ def _evaluate_performance(
         sharpe = 0.0
         max_drawdown = 0.0
 
+    # ---- profit factor & annual volatility ----
+    if trades > 0:
+        matched_trades = min(len(entries), len(exits))
+        win_returns: list[float] = []
+        loss_returns: list[float] = []
+        for i in range(matched_trades):
+            r = (exits[i]["price"] - entries[i]["price"]) / entries[i]["price"]
+            if r > 0:
+                win_returns.append(r)
+            elif r < 0:
+                loss_returns.append(abs(r))
+        avg_win = float(np.mean(win_returns)) if win_returns else 0.0
+        avg_loss = float(np.mean(loss_returns)) if loss_returns else 0.0
+        profit_factor = round(avg_win / avg_loss, 2) if avg_loss > 0 else 0.0
+    else:
+        profit_factor = 0.0
+
+    annual_volatility = round(float(std_ret * np.sqrt(252)) if len(daily_returns) > 1 else 0.0, 4)
+    final_equity = round(float(equity.iloc[-1]), 6) if len(equity) > 0 else 1.0
+
     return {
         "trade_count": trades,
         "win_rate": round(win_rate, 4),
@@ -399,6 +775,9 @@ def _evaluate_performance(
         "annual_return": round(annual_return, 6),
         "max_drawdown": round(max_drawdown, 6),
         "sharpe": round(sharpe, 4),
+        "annual_volatility": annual_volatility,
+        "profit_factor": profit_factor,
+        "final_equity": final_equity,
         "equity_curve": equity_curve,
     }
 

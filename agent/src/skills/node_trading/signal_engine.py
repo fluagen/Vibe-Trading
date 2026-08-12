@@ -17,6 +17,28 @@ from src.skills.node_trading.risk_manager import (
 )
 
 
+def _tp_reason_name(
+    stage: str, r_val: float, close: float,
+    ma5: float, ma10: float, ma20: float,
+    tp_r_s5: float = 9.0, tp_r_s4: float = 6.0,
+    is_halve: bool = False,
+) -> str:
+    """Build human-readable take-profit reason string."""
+    suffix = "减半" if is_halve else "全清"
+    if stage in ("S4", "S5"):
+        if r_val > tp_r_s5:
+            ma_label = "MA5" if (is_halve and close < ma5) else "MA10"
+            return f"R>9% {ma_label}{suffix}"
+        if r_val > tp_r_s4:
+            ma_label = "MA10" if is_halve else "MA20"
+            return f"6%<R≤9% {ma_label}{suffix}"
+        return f"R≤6% MA20全清"
+    if stage == "S3":
+        ma_label = "MA10" if is_halve else "MA20"
+        return f"S3 {ma_label}{suffix}"
+    return f"止盈{suffix}"
+
+
 class SignalEngine:
     """节点交易策略信号引擎。所有阈值参数可配置，带 PRD 默认值。"""
 
@@ -64,12 +86,15 @@ class SignalEngine:
             support_s4_size=support_s4_size,
             sticky_breakout_size=sticky_breakout_size,
         )
-        self._risk_kwargs = dict(
+        self._stop_kwargs = dict(
             hard_stop_pct=hard_stop_pct,
             reversal_node_fail_days=reversal_node_fail_days,
+        )
+        self._tp_kwargs = dict(
             r_s5=tp_r_s5,
             r_s4=tp_r_s4,
         )
+        self.bar_metadata_: list[dict] = []
 
     def generate(self, data_map: Dict[str, pd.DataFrame]) -> Dict[str, pd.Series]:
         """为每只股票生成交易信号。"""
@@ -84,6 +109,7 @@ class SignalEngine:
         signals = pd.Series(0.0, index=ind.index, name="signal")
         pos = PositionState()
         prev_stage, prev_alignment = "S1", "crossed"
+        self.bar_metadata_ = []
 
         def _update_prev(s: str, a: str) -> None:
             """只在 alignment 有意义（非 crossed）时更新 prev_stage/prev_alignment。"""
@@ -111,36 +137,64 @@ class SignalEngine:
                 **self._stage_kwargs,
             )
 
+            reason: str | None = None
+            node_type: str | None = None
+
             # --- 止损检查 ---
             stop_reason = check_stop_loss(
-                pos, close, i, **self._risk_kwargs,
+                pos, close, i, **self._stop_kwargs,
             )
             if stop_reason is not None:
                 signals.iloc[i] = -1.0
                 pos.clear()
+                reason = stop_reason
+                self.bar_metadata_.append(dict(
+                    stage=stage, alignment=alignment, r=r_val, cv=cv_val, rs=rs_val,
+                    node_type=None, exit_reason=reason, signal=-1.0,
+                ))
                 _update_prev(stage, alignment)
                 continue
 
             # --- 止盈检查 ---
-            tp_result = check_take_profit(pos, close, ma5, ma10, ma20, stage, alignment, r=r_val)
+            tp_result = check_take_profit(pos, close, ma5, ma10, ma20, stage, alignment, r=r_val, **self._tp_kwargs)
             if tp_result is not None:
-                if tp_result == -1.0:
+                is_halve = tp_result != -1.0
+                if not is_halve:
                     signals.iloc[i] = -1.0
                     pos.clear()
                 else:
                     signals.iloc[i] = tp_result
                     pos.size = tp_result
+                reason = _tp_reason_name(
+                    stage=stage, r_val=r_val, close=close,
+                    ma5=ma5, ma10=ma10, ma20=ma20,
+                    tp_r_s5=self._tp_kwargs["r_s5"],
+                    tp_r_s4=self._tp_kwargs["r_s4"],
+                    is_halve=is_halve,
+                )
+                self.bar_metadata_.append(dict(
+                    stage=stage, alignment=alignment, r=r_val, cv=cv_val, rs=rs_val,
+                    node_type=None, exit_reason=reason, signal=signals.iloc[i],
+                ))
                 _update_prev(stage, alignment)
                 continue
 
             # --- 禁买区 ---
             stage_max = get_stage_max_position(stage, alignment)
             if pos.size <= 0 and stage_max <= 0:
+                self.bar_metadata_.append(dict(
+                    stage=stage, alignment=alignment, r=r_val, cv=cv_val, rs=rs_val,
+                    node_type=None, exit_reason=None, signal=0.0,
+                ))
                 _update_prev(stage, alignment)
                 continue
 
             # --- 已有仓位不开新仓 ---
             if pos.size > 0:
+                self.bar_metadata_.append(dict(
+                    stage=stage, alignment=alignment, r=r_val, cv=cv_val, rs=rs_val,
+                    node_type=None, exit_reason=None, signal=0.0,
+                ))
                 _update_prev(stage, alignment)
                 continue
 
@@ -153,6 +207,10 @@ class SignalEngine:
                 ma20=ma20, r=r_val, **self._node_kwargs,
             )
             if node_type is None:
+                self.bar_metadata_.append(dict(
+                    stage=stage, alignment=alignment, r=r_val, cv=cv_val, rs=rs_val,
+                    node_type=None, exit_reason=None, signal=0.0,
+                ))
                 _update_prev(stage, alignment)
                 continue
 
@@ -163,6 +221,10 @@ class SignalEngine:
                 **self._position_kwargs,
             )
             if target_size <= 0:
+                self.bar_metadata_.append(dict(
+                    stage=stage, alignment=alignment, r=r_val, cv=cv_val, rs=rs_val,
+                    node_type=node_type, exit_reason=None, signal=0.0,
+                ))
                 _update_prev(stage, alignment)
                 continue
             if stage_max > 0:
@@ -174,6 +236,10 @@ class SignalEngine:
                 size=target_size, price=close, node_type=node_type,
                 node_low=low, bar_index=i,
             )
+            self.bar_metadata_.append(dict(
+                stage=stage, alignment=alignment, r=r_val, cv=cv_val, rs=rs_val,
+                node_type=node_type, exit_reason=None, signal=target_size,
+            ))
             _update_prev(stage, alignment)
 
         return signals

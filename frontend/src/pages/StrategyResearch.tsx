@@ -28,6 +28,34 @@ const STATE_LABELS: Record<string, string> = {
   pullback_end: "回调结束", breakdown: "崩坏",
 };
 
+const NODE_STAGE_COLORS: Record<string, string> = {
+  S1: "bg-slate-400", S2: "bg-amber-500",
+  S3: "bg-emerald-500", S4: "bg-sky-500",
+  S5: "bg-red-500",
+};
+
+const NODE_STAGE_LABELS: Record<string, string> = {
+  S1: "蓄势", S2: "萌芽",
+  S3: "健康趋势", S4: "加速",
+  S5: "极端",
+};
+
+function stageDisplay(finalState: string, strategy: string): { label: string; color: string } {
+  if (strategy === "node_trading") {
+    const m = finalState.match(/^(S\d)/);
+    const stage = m ? m[1] : "S1";
+    const dir = finalState.includes("bull") ? "多" : finalState.includes("bear") ? "空" : "";
+    return {
+      label: (NODE_STAGE_LABELS[stage] || stage) + (dir ? `(${dir})` : ""),
+      color: NODE_STAGE_COLORS[stage] || "bg-slate-400",
+    };
+  }
+  return {
+    label: STATE_LABELS[finalState] || finalState,
+    color: STATE_COLORS[finalState] || "bg-slate-500",
+  };
+}
+
 const DATE_PRESETS: DatePreset[] = ["30", "60", "120", "250", "custom"];
 
 function getXueqiuUrl(code: string): string {
@@ -78,6 +106,10 @@ export function StrategyResearch() {
   const [activeTab, setActiveTab] = useState<"config" | "backtest" | "candidates">("backtest");
   const [backtestParams, setBacktestParams] = useState<StrategyConfigParams | null>(null);
   const [showParamsOverride, setShowParamsOverride] = useState(false);
+
+  // Strategy selection
+  const [strategies, setStrategies] = useState<string[]>([]);
+  const [selectedStrategy, setSelectedStrategy] = useState("up_trend_structure");
 
   const [showMembers, setShowMembers] = useState(true);
   const [showResults, setShowResults] = useState(true);
@@ -148,10 +180,19 @@ export function StrategyResearch() {
   }, [members]);
 
   useEffect(() => {
-    api.getStrategyConfig("up_trend_structure")
-      .then((res) => setBacktestParams(res.params))
+    api.getStrategyResearchStrategies()
+      .then((list) => {
+        setStrategies(list);
+        if (list.length > 0) setSelectedStrategy(list[0]);
+      })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    api.getStrategyConfig(selectedStrategy)
+      .then((res) => setBacktestParams(res.params))
+      .catch(() => {});
+  }, [selectedStrategy]);
 
   useEffect(() => {
     api.getTradingDays(250).then((d: TradingDaysResponse) => {
@@ -240,7 +281,7 @@ export function StrategyResearch() {
     try {
       const { job_id } = await api.startBacktest({
         codes, start_date: range.start, end_date: range.end,
-        strategy: "up_trend_structure",
+        strategy: selectedStrategy,
         params: backtestParams ?? undefined,
       });
       if (!job_id) { toast.error(t("strategyResearch.backtestFailed")); setBacktesting(false); return; }
@@ -297,6 +338,21 @@ export function StrategyResearch() {
             </h1>
           </div>
           <div className="h-5 w-px bg-border" />
+          {/* Strategy selector */}
+          <select
+            value={selectedStrategy}
+            onChange={(e) => {
+              setSelectedStrategy(e.target.value);
+              setResults([]);
+              setSelectedResultCode(null);
+            }}
+            className="rounded border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
+          >
+            {strategies.map((s) => (
+              <option key={s} value={s}>{s === "up_trend_structure" ? "上涨趋势结构" : "节点交易"}</option>
+            ))}
+          </select>
+          <div className="h-5 w-px bg-border" />
           <div className="flex rounded-md border border-border bg-card p-0.5">
             {(["backtest", "config", "candidates"] as const).map((tab) => (
               <button
@@ -329,7 +385,7 @@ export function StrategyResearch() {
       </div>
 
       {/* Config Tab */}
-      {activeTab === "config" && <StrategyConfigTab />}
+      {activeTab === "config" && <StrategyConfigTab selectedStrategy={selectedStrategy} />}
 
       {activeTab === "candidates" && <CandidateListTab />}
 
@@ -611,7 +667,10 @@ export function StrategyResearch() {
               </span>
             </div>
             <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-              {Object.keys(STATE_LABELS).map((st) => (
+              {(selectedStrategy === "node_trading"
+                ? Object.keys(NODE_STAGE_LABELS)
+                : Object.keys(STATE_LABELS)
+              ).map((st) => (
                 <button key={st}
                   onClick={() => {
                     setResultStateFilter(resultStateFilter === st ? "" : st);
@@ -622,7 +681,7 @@ export function StrategyResearch() {
                       ? "border-primary/30 bg-primary/10 text-primary"
                       : "border-border text-muted-foreground hover:border-muted-foreground/50"
                   }`}>
-                  {STATE_LABELS[st]}
+                  {selectedStrategy === "node_trading" ? NODE_STAGE_LABELS[st] : STATE_LABELS[st]}
                 </button>
               ))}
             </div>
@@ -648,8 +707,14 @@ export function StrategyResearch() {
                         onClick={() => toggleResultSort("win_rate")}>
                         <span className="inline-flex items-center gap-1">胜率 {resultSortIcon("win_rate")}</span>
                       </th>
-                      <th className="px-3 py-2 text-right font-medium">止跌K</th>
-                      <th className="px-3 py-2 text-right font-medium">证伪K</th>
+                      {selectedStrategy === "up_trend_structure" ? (
+                        <>
+                          <th className="px-3 py-2 text-right font-medium">止跌K</th>
+                          <th className="px-3 py-2 text-right font-medium">证伪K</th>
+                        </>
+                      ) : (
+                        <th className="px-3 py-2 text-left font-medium">节点</th>
+                      )}
                       <th className="px-3 py-2 text-right font-medium cursor-pointer select-none hover:text-foreground transition-colors"
                         onClick={() => toggleResultSort("cumulative_return")}>
                         <span className="inline-flex items-center gap-1">累计收益 {resultSortIcon("cumulative_return")}</span>
@@ -680,10 +745,11 @@ export function StrategyResearch() {
                             <td className="px-3 py-2.5">
                               {(() => {
                                 const ds = r.final_state;
+                                const disp = stageDisplay(ds, selectedStrategy);
                                 return (
-                                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-white ${STATE_COLORS[ds] || "bg-slate-500"}`}>
+                                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-white ${disp.color}`}>
                                     <span className={`h-1.5 w-1.5 rounded-full ${isOpen ? "bg-white" : "bg-white/60"}`} />
-                                    {STATE_LABELS[ds] || ds}
+                                    {disp.label}
                                   </span>
                                 );
                               })()}
@@ -692,8 +758,14 @@ export function StrategyResearch() {
                             <td className={`px-3 py-2.5 text-right tabular-nums font-mono ${
                               r.win_rate >= 0.5 ? "text-emerald-500" : r.win_rate > 0 ? "text-amber-500" : "text-red-500"
                             }`}>{(r.win_rate * 100).toFixed(0)}%</td>
-                            <td className="px-3 py-2.5 text-right tabular-nums font-mono text-muted-foreground">{r.bsk_count ?? "—"}</td>
-                            <td className="px-3 py-2.5 text-right tabular-nums font-mono text-muted-foreground">{r.ck_count ?? "—"}</td>
+                            {selectedStrategy === "up_trend_structure" ? (
+                              <>
+                                <td className="px-3 py-2.5 text-right tabular-nums font-mono text-muted-foreground">{r.bsk_count ?? "—"}</td>
+                                <td className="px-3 py-2.5 text-right tabular-nums font-mono text-muted-foreground">{r.ck_count ?? "—"}</td>
+                              </>
+                            ) : (
+                              <td className="px-3 py-2.5 text-left font-mono text-[10px] text-muted-foreground">{r.node_count_str || "—"}</td>
+                            )}
                             <td className={`px-3 py-2.5 text-right tabular-nums font-mono font-medium ${
                               r.cumulative_return >= 0 ? "text-red-500" : "text-emerald-500"
                             }`}>{r.cumulative_return >= 0 ? "+" : ""}{(r.cumulative_return * 100).toFixed(2)}%</td>
@@ -703,10 +775,10 @@ export function StrategyResearch() {
                               }`}>{isOpen ? "收起" : "展开"}</span>
                             </td>
                           </tr>
-                          {isOpen && detailData && (
+                          {isOpen && detailData && selectedStrategy === "up_trend_structure" && (
                             <tr key={`${r.code}-detail`}>
                               <td colSpan={9} className="px-4 py-3 bg-muted/15 border-t border-primary/10">
-                                <DetailPanel data={detailData} onClose={() => setSelectedResultCode(null)} onAddCandidate={handleAddCandidate} />
+                                <DetailPanel data={detailData} strategy={selectedStrategy} stockName={codeToName[detailData.code] || detailData.name} onClose={() => setSelectedResultCode(null)} onAddCandidate={handleAddCandidate} />
                               </td>
                             </tr>
                           )}
@@ -751,6 +823,11 @@ export function StrategyResearch() {
         </div>
       )}
       </>
+      )}
+
+      {/* Node trading modal — rendered at page level */}
+      {selectedStrategy === "node_trading" && selectedResultCode && detailData && (
+        <DetailPanel data={detailData} strategy="node_trading" stockName={codeToName[detailData.code] || detailData.name} onClose={() => setSelectedResultCode(null)} onAddCandidate={handleAddCandidate} />
       )}
     </div>
   );

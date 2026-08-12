@@ -1156,13 +1156,18 @@ export interface BacktestRequest {
 }
 
 export interface StrategyConfigParams {
-  up_phase_min_bars: number;
-  volume_surge_ratio: number;
-  big_bull_body_ratio: number;
-  inv_hammer_shadow_ratio: number;
-  close_above_prev_mid: number;
-  stop_loss_pct: number;
-  divergence_repair_bars: number;
+  [key: string]: number;
+}
+
+export interface StrategyParamDef {
+  key: string;
+  group: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  isInt: boolean;
+  default: number;
 }
 
 export interface StrategyConfigResponse {
@@ -1176,8 +1181,10 @@ export interface SignalPoint {
   type: string;
   price: number;
   signal_value: number;
-  entry_label?: string;   // 图表短标签，如 "入(倒垂)"
-  entry_pattern?: string; // 形态名称，如 "倒垂"、"反包"、"筑底"
+  entry_label?: string;
+  entry_pattern?: string;
+  exit_reason?: string;    // node_trading exit reason
+  node_type?: string;      // node_trading entry node type
 }
 
 export interface OHLCSnapshotBar {
@@ -1197,7 +1204,11 @@ export interface TradeSignal {
   price: number;
   signal_value: number;
   description: string;
-  entry_pattern?: string; // 止跌K形态，如 "倒垂"、"反包"、"筑底"
+  entry_pattern?: string;
+  exit_reason?: string;
+  stage_desc?: string;     // node_trading stage context
+  node_type?: string;      // reversal/support/sticky_breakout
+  node_label?: string;     // 反转/支撑/粘合突破
 }
 
 export interface TradeRecord {
@@ -1205,6 +1216,21 @@ export interface TradeRecord {
   signals: TradeSignal[];
   return_pct: number;
   is_win: boolean;
+}
+
+/** Flat trade row for node_trading template report. */
+export interface TradeRow {
+  entry_date: string;
+  entry_stage: string;
+  exit_date: string;
+  exit_stage: string;
+  node_label: string;
+  position: number;
+  entry_price: number;
+  exit_price: number;
+  return_pct: number;
+  exit_reason: string;
+  is_open: boolean;
 }
 
 export interface BacktestSummaryItem {
@@ -1218,19 +1244,31 @@ export interface BacktestSummaryItem {
   loss_count: number;
   cumulative_return: number;
   annual_return: number;
+  annual_volatility?: number;
   max_drawdown: number;
   sharpe: number;
+  profit_factor?: number;
+  final_equity?: number;
   bsk_count: number;
   ck_count: number;
   latest_signal: SignalPoint | null;
   signal_points: SignalPoint[];
   trades: TradeRecord[];
+  trade_rows?: TradeRow[];
   trading_days: number;
   date_start: string;
   date_end: string;
   equity_curve: EquityPoint[];
   states_summary: Record<string, number>;
   ohlcv_snapshot: OHLCSnapshotBar[];
+  // node_trading specific
+  node_count_str?: string;
+  latest_stage?: string;
+  latest_alignment?: string;
+  latest_r?: number;
+  latest_cv?: number;
+  latest_rs?: number;
+  current_state_line?: string;
 }
 
 export type BacktestDetailItem = BacktestSummaryItem;

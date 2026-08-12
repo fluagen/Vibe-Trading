@@ -4,14 +4,19 @@ import { toast } from "sonner";
 import { api, type StrategyConfigParams } from "@/lib/api";
 
 interface ParamDef {
-  key: keyof StrategyConfigParams;
+  key: string;
   min: number;
   max: number;
   step: number;
   isInt: boolean;
 }
 
-const DEFAULTS: StrategyConfigParams = {
+interface ParamGroup {
+  title: string;
+  params: ParamDef[];
+}
+
+const UP_TREND_DEFAULTS: StrategyConfigParams = {
   up_phase_min_bars: 3,
   volume_surge_ratio: 1.5,
   big_bull_body_ratio: 0.6,
@@ -21,56 +26,105 @@ const DEFAULTS: StrategyConfigParams = {
   divergence_repair_bars: 1,
 };
 
-const ENTRY_PARAMS: ParamDef[] = [
-  { key: "up_phase_min_bars", min: 2, max: 10, step: 1, isInt: true },
-  { key: "volume_surge_ratio", min: 1.0, max: 5.0, step: 0.1, isInt: false },
-  { key: "big_bull_body_ratio", min: 0.3, max: 0.9, step: 0.05, isInt: false },
-  { key: "inv_hammer_shadow_ratio", min: 1.0, max: 5.0, step: 0.1, isInt: false },
-  { key: "close_above_prev_mid", min: 0.3, max: 0.9, step: 0.05, isInt: false },
-  { key: "divergence_repair_bars", min: 1, max: 5, step: 1, isInt: true },
+const UP_TREND_GROUPS: ParamGroup[] = [
+  {
+    title: "entryParams",
+    params: [
+      { key: "up_phase_min_bars", min: 2, max: 10, step: 1, isInt: true },
+      { key: "volume_surge_ratio", min: 1.0, max: 5.0, step: 0.1, isInt: false },
+      { key: "big_bull_body_ratio", min: 0.3, max: 0.9, step: 0.05, isInt: false },
+      { key: "inv_hammer_shadow_ratio", min: 1.0, max: 5.0, step: 0.1, isInt: false },
+      { key: "close_above_prev_mid", min: 0.3, max: 0.9, step: 0.05, isInt: false },
+      { key: "divergence_repair_bars", min: 1, max: 5, step: 1, isInt: true },
+    ],
+  },
+  {
+    title: "riskParams",
+    params: [
+      { key: "stop_loss_pct", min: 0.01, max: 0.10, step: 0.005, isInt: false },
+    ],
+  },
 ];
 
-const RISK_PARAMS: ParamDef[] = [
-  { key: "stop_loss_pct", min: 0.01, max: 0.10, step: 0.005, isInt: false },
+const NODE_TRADING_DEFAULTS: StrategyConfigParams = {
+  r_s5: 9.0, cv_s5: 0.4, r_s4: 6.0, rs_s4: 1.1,
+  r_s3_lower: 4.0, r_s3_upper: 6.0, cv_s3: 0.3,
+  reversal_vol_ratio: 1.0, s2_reversal_r_min: 2.5,
+  support_ma_tolerance: 0.005, s1_breakout_vol_ratio: 1.5,
+  support_s3_size: 0.5, support_s4_size: 0.3,
+  hard_stop_pct: 0.05, reversal_node_fail_days: 3,
+};
+
+const NODE_TRADING_GROUPS: ParamGroup[] = [
+  {
+    title: "stageThresholds",
+    params: [
+      { key: "r_s3_lower", min: 1.0, max: 10.0, step: 0.5, isInt: false },
+      { key: "r_s3_upper", min: 3.0, max: 15.0, step: 0.5, isInt: false },
+      { key: "r_s4", min: 3.0, max: 15.0, step: 0.5, isInt: false },
+      { key: "r_s5", min: 5.0, max: 20.0, step: 0.5, isInt: false },
+      { key: "cv_s3", min: 0.1, max: 0.8, step: 0.05, isInt: false },
+      { key: "cv_s5", min: 0.2, max: 1.0, step: 0.05, isInt: false },
+      { key: "rs_s4", min: 1.0, max: 3.0, step: 0.1, isInt: false },
+    ],
+  },
+  {
+    title: "nodeDetection",
+    params: [
+      { key: "reversal_vol_ratio", min: 0.5, max: 3.0, step: 0.1, isInt: false },
+      { key: "s2_reversal_r_min", min: 1.0, max: 5.0, step: 0.5, isInt: false },
+      { key: "support_ma_tolerance", min: 0.001, max: 0.02, step: 0.001, isInt: false },
+      { key: "s1_breakout_vol_ratio", min: 1.0, max: 3.0, step: 0.1, isInt: false },
+    ],
+  },
+  {
+    title: "positionRisk",
+    params: [
+      { key: "support_s3_size", min: 0.1, max: 0.7, step: 0.05, isInt: false },
+      { key: "support_s4_size", min: 0.1, max: 0.5, step: 0.05, isInt: false },
+      { key: "hard_stop_pct", min: 0.01, max: 0.10, step: 0.005, isInt: false },
+      { key: "reversal_node_fail_days", min: 1, max: 10, step: 1, isInt: true },
+    ],
+  },
 ];
+
+function getDefaults(strategy: string): StrategyConfigParams {
+  if (strategy === "node_trading") return { ...NODE_TRADING_DEFAULTS };
+  return { ...UP_TREND_DEFAULTS };
+}
+
+function getGroups(strategy: string): ParamGroup[] {
+  if (strategy === "node_trading") return NODE_TRADING_GROUPS;
+  return UP_TREND_GROUPS;
+}
 
 function fmtVal(v: number, isInt: boolean): string {
   if (isInt) return String(v);
   return v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
 
-export function StrategyConfigTab() {
+export function StrategyConfigTab({ selectedStrategy }: { selectedStrategy: string }) {
   const { t } = useTranslation();
 
-  const [strategies, setStrategies] = useState<string[]>([]);
-  const [selectedStrategy, setSelectedStrategy] = useState("up_trend_structure");
-  const [params, setParams] = useState<StrategyConfigParams>({ ...DEFAULTS });
+  const defaults = getDefaults(selectedStrategy);
+  const groups = getGroups(selectedStrategy);
+
+  const [params, setParams] = useState<StrategyConfigParams>({ ...defaults });
   const [isDefault, setIsDefault] = useState(true);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    api.getStrategyResearchStrategies()
-      .then((list) => {
-        setStrategies(list);
-        if (list.length > 0 && !list.includes(selectedStrategy)) {
-          setSelectedStrategy(list[0]);
-        }
-      })
-      .catch(() => toast.error(t("strategyResearch.loadFailed")));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const loadConfig = useCallback(
     (strategy: string) => {
       setLoading(true);
+      const curDefaults = getDefaults(strategy);
       api
         .getStrategyConfig(strategy)
         .then((res) => {
-          setParams({ ...DEFAULTS, ...res.params });
+          setParams({ ...curDefaults, ...res.params });
           setIsDefault(res.is_default);
         })
         .catch(() => {
-          setParams({ ...DEFAULTS });
+          setParams({ ...curDefaults });
           setIsDefault(true);
         })
         .finally(() => setLoading(false));
@@ -82,13 +136,13 @@ export function StrategyConfigTab() {
     loadConfig(selectedStrategy);
   }, [selectedStrategy, loadConfig]);
 
-  const updateParam = (key: keyof StrategyConfigParams, value: number) => {
+  const updateParam = (key: string, value: number) => {
     setParams((prev) => ({ ...prev, [key]: value }));
     setIsDefault(false);
   };
 
-  const resetParam = (key: keyof StrategyConfigParams) => {
-    setParams((prev) => ({ ...prev, [key]: DEFAULTS[key] }));
+  const resetParam = (key: string) => {
+    setParams((prev) => ({ ...prev, [key]: defaults[key] }));
   };
 
   const handleSave = async () => {
@@ -105,21 +159,21 @@ export function StrategyConfigTab() {
     if (!confirm(t("strategyResearch.resetConfirm"))) return;
     try {
       const res = await api.deleteStrategyConfig(selectedStrategy);
-      setParams({ ...DEFAULTS, ...res.params });
+      setParams({ ...defaults, ...res.params });
       setIsDefault(true);
       toast.success(t("strategyResearch.configSaved"));
     } catch {
-      setParams({ ...DEFAULTS });
+      setParams({ ...defaults });
       setIsDefault(true);
     }
   };
 
-  const renderParamGroup = (title: string, defs: ParamDef[]) => (
+  const renderParamGroup = (group: ParamGroup) => (
     <div className="mb-4">
-      <h3 className="mb-3 text-sm font-medium text-foreground">{title}</h3>
+      <h3 className="mb-3 text-sm font-medium text-foreground">{t(`strategyResearch.${group.title}`)}</h3>
       <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-        {defs.map((d) => {
-          const value = params[d.key];
+        {group.params.map((d) => {
+          const value = params[d.key] ?? defaults[d.key];
           return (
             <div key={d.key} className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
@@ -139,7 +193,7 @@ export function StrategyConfigTab() {
                     }}
                     className="w-16 rounded border border-border bg-card px-1.5 py-0.5 text-right text-xs text-foreground"
                   />
-                  {value !== DEFAULTS[d.key] && (
+                  {value !== defaults[d.key] && (
                     <button
                       onClick={() => resetParam(d.key)}
                       className="text-xs text-muted-foreground hover:text-foreground"
@@ -172,28 +226,11 @@ export function StrategyConfigTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Strategy selector */}
-      <div className="flex items-center gap-3">
-        <label className="text-xs text-muted-foreground">{t("strategyResearch.strategy")}</label>
-        <select
-          value={selectedStrategy}
-          onChange={(e) => setSelectedStrategy(e.target.value)}
-          className="rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
-        >
-          {strategies.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </div>
-
       {loading ? (
         <div className="text-xs text-muted-foreground">Loading...</div>
       ) : (
         <>
-          {renderParamGroup(t("strategyResearch.entryParams"), ENTRY_PARAMS)}
-          {renderParamGroup(t("strategyResearch.riskParams"), RISK_PARAMS)}
+          {groups.map((g) => renderParamGroup(g))}
 
           {/* Action buttons */}
           <div className="flex gap-3">
